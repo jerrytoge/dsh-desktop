@@ -48,7 +48,6 @@ mac:
   identity: null
   target:
     - dir
-    - zip
     - dmg
   # Release signing (requires a Developer ID Application certificate and an
   # Apple ID for notarization) would add:

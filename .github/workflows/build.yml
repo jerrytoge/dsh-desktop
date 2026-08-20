@@ -75,12 +75,11 @@ jobs:
 
       - name: Upload artifact (full build only)
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: dsh-desktop-macos
           path: |
             dist/*.app/**/*
-            dist/*.zip
             dist/*.dmg
           if-no-files-found: warn
 
@@ -91,7 +90,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
         with:
           name: dsh-desktop-macos
           path: dist
@@ -105,5 +104,4 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: |
-            dist/*.zip
             dist/*.dmg
