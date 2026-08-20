@@ -1,0 +1,9 @@
+node_modules/
+dist/
+node/
+out/
+*.log
+.DS_Store
+.dsh-smoke/
+.electron-cache/
+.electron-user-data/

@@ -1,0 +1,56 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # B2: fetch the bundled Node runtime (darwin-arm64) instead of
+      # committing a 138MB binary to git. Mirrors the local `npm run fetch-node`.
+      - name: Fetch bundled Node runtime
+        run: npm run fetch-node
+
+      - name: Build app (dir + zip)
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-macos
+          path: |
+            dist/*.app/**/*
+            dist/*.zip
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dsh-desktop-macos
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v$(date +%Y%m%d-%H%M%S)
+          files: dist/*.zip

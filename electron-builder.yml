@@ -1,0 +1,53 @@
+# electron-builder configuration for the dsh-desktop prototype.
+#
+# Design notes:
+# - asar: false — the sidecar Node process must require() the bundled
+#   node_modules as real files; Node cannot read inside an asar archive.
+# - extraResources — the bundled Node runtime, placed at Resources/node so the
+#   packaged app has a node binary even though the host has none on PATH.
+# - mac.identity: null — unsigned prototype build (no Developer ID certificate).
+
+appId: com.deepseek.harness.desktop
+productName: DeepSeek Harness
+copyright: Copyright © 2025
+
+directories:
+  output: dist
+  buildResources: build
+
+# Reuse the Electron dist already extracted by `npm install` (node_modules/electron/dist)
+# instead of re-downloading the zip through @electron/get. This also sidesteps
+# @electron/get's default cache under ~/Library/Caches/electron.
+electronDist: node_modules/electron/dist
+
+asar: false
+
+# The harness runs under the BUNDLED Node (not Electron), so its native modules
+# (sharp, node-pty, …) must stay on the Node ABI. Disable electron-builder's
+# automatic @electron/rebuild step.
+npmRebuild: false
+
+files:
+  - main.js
+  - preload.js
+  - package.json
+
+extraResources:
+  - from: node
+    to: node
+    filter:
+      - "**/*"
+
+mac:
+  category: public.app-category.developer-tools
+  identity: null
+  target:
+    - dir
+    - zip
+  # Release signing (requires a Developer ID Application certificate and an
+  # Apple ID for notarization) would add:
+  #   hardenedRuntime: true
+  #   gatekeeperAssess: false
+  #   entitlements: build/entitlements.mac.plist
+  #   entitlementsInherit: build/entitlements.mac.plist
+  #   notarize: true
