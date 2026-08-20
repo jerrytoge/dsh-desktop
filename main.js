@@ -97,18 +97,19 @@ function resolveNode() {
   return 'node';
 }
 
-// ── harness update check ────────────────────────────────────────────────────
+// ── app update check ────────────────────────────────────────────────────────
 
-// Detects whether the bundled @deepseek-ai/dsh (the harness) is older than the
-// version the configured npm registry advertises as `latest`, and prompts once.
-// Opt-out with DSH_UPDATE_CHECK=0; any network error is logged and ignored.
+// Detects whether a newer desktop release exists on GitHub Releases and
+// prompts once. The app version is read from package.json (kept in sync with
+// the bundled harness version via Renovate). Opt-out with DSH_UPDATE_CHECK=0;
+// any network error is logged and ignored.
 const UPDATE_CHECK_DISABLED = ['0', 'false'].includes(String(process.env.DSH_UPDATE_CHECK || '').toLowerCase());
-const NPM_REGISTRY = (process.env.DSH_NPM_REGISTRY || 'https://registry.npmjs.org/').replace(/\/+$/, '');
-const UPDATE_PAGE = process.env.DSH_UPDATE_URL || 'https://www.npmjs.com/package/@deepseek-ai/dsh';
-const DSH_PACKAGE = '@deepseek-ai/dsh';
+const GITHUB_API = (process.env.DSH_GITHUB_API || 'https://api.github.com').replace(/\/+$/, '');
+const REPO = process.env.DSH_REPO || 'jerrytoge/dsh-desktop';
+const RELEASES_PAGE = process.env.DSH_UPDATE_URL || `https://github.com/${REPO}/releases`;
 
-function getBundledDshVersion() {
-  const pkgJson = path.join(__dirname, 'node_modules', '@deepseek-ai', 'dsh', 'package.json');
+function getAppVersion() {
+  const pkgJson = path.join(__dirname, 'package.json');
   if (!fs.existsSync(pkgJson)) return null;
   try {
     return JSON.parse(fs.readFileSync(pkgJson, 'utf8')).version || null;
@@ -117,41 +118,47 @@ function getBundledDshVersion() {
   }
 }
 
-async function checkForHarnessUpdate() {
-  const current = getBundledDshVersion();
+async function checkForUpdate() {
+  const current = getAppVersion();
   if (!current) return null;
-  const url = `${NPM_REGISTRY}/${DSH_PACKAGE.replace('/', '%2F')}/latest`;
+  const url = `${GITHUB_API}/repos/${REPO}/releases/latest`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
   try {
-    const res = await fetch(url, { headers: { accept: 'application/json' }, signal: controller.signal });
+    const res = await fetch(url, {
+      headers: { accept: 'application/vnd.github+json' },
+      signal: controller.signal,
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    const latest = data && data.version;
-    if (typeof latest !== 'string') return null;
+    // tag_name is e.g. "v0.1.0-rc.9-12" (harness version + build number).
+    // Compare the full string: a larger build number on the SAME harness
+    // version means an app-only stability release, which also counts as newer.
+    const latest = (data && data.tag_name || '').replace(/^v/, '');
+    if (!latest) return null;
     return { current, latest, hasUpdate: semver.gt(latest, current) };
   } catch (err) {
-    log('harness update check failed (ignored):', err && err.message);
+    log('update check failed (ignored):', err && err.message);
     return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-function promptHarnessUpdate(info) {
+function promptUpdate(info) {
   if (!win || win.isDestroyed()) return;
   dialog
     .showMessageBox(win, {
       type: 'info',
       title: '发现新版本',
-      message: '内置 Harness 有新版本可用',
-      detail: `当前版本：${info.current}\n最新版本：${info.latest}\n\n内置的 DeepSeek Harness 已过期，建议升级到最新版。`,
+      message: 'DeepSeek Harness Desktop 有新版本可用',
+      detail: `当前版本：${info.current}\n最新版本：${info.latest}\n\n可在 GitHub Releases 下载新版本。`,
       buttons: ['前往下载', '稍后'],
       defaultId: 0,
       cancelId: 1,
     })
     .then(({ response }) => {
-      if (response === 0) shell.openExternal(UPDATE_PAGE);
+      if (response === 0) shell.openExternal(RELEASES_PAGE);
     })
     .catch(() => {});
 }
@@ -430,11 +437,11 @@ async function boot() {
     await waitForHttp(currentUrl);
     createWindow(currentUrl);
 
-    // Check the bundled harness version against the registry (non-blocking,
-    // silent on failure). Skipped during smoke tests and when opted out.
+    // Check GitHub Releases for a newer desktop build (non-blocking, silent
+    // on failure). Skipped during smoke tests and when opted out.
     if (!UPDATE_CHECK_DISABLED && !SMOKE) {
-      checkForHarnessUpdate().then((info) => {
-        if (info && info.hasUpdate) promptHarnessUpdate(info);
+      checkForUpdate().then((info) => {
+        if (info && info.hasUpdate) promptUpdate(info);
       });
     }
 

@@ -30,6 +30,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Derive the app version from the harness version + the run_number, so
+      # (a) the filename/tag track the bundled harness, and (b) app-only
+      # stability releases still count as "newer" (run_number increases).
+      # Resulting version is a valid semver prerelease, e.g. 0.1.0-rc.8-7.
+      - name: Derive version from harness + build number
+        run: |
+          H=$(node -p "require('./node_modules/@deepseek-ai/dsh/package.json').version")
+          V="$H-${{ github.run_number }}"
+          echo "app version: $V"
+          node -e "const fs=require('fs');const p=require('./package.json');p.version=process.argv[1];fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')" "$V"
+          printf '%s' "$V" > release-version.txt
+
       # electron@43+ no longer downloads its binary via postinstall; it is
       # fetched lazily on first `electron .` or on demand via install.js.
       # electron-builder reads node_modules/electron/dist, so fetch it explicitly.
@@ -81,6 +93,7 @@ jobs:
           path: |
             dist/*.app/**/*
             dist/*.dmg
+            release-version.txt
           if-no-files-found: warn
 
   release:
@@ -95,9 +108,11 @@ jobs:
           name: dsh-desktop-macos
           path: dist
 
-      - name: Generate timestamp tag
+      - name: Generate version tag
         id: tag
-        run: echo "tag=v$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+        # release-version.txt already contains "<harness>-<run_number>";
+        # just prefix "v".
+        run: echo "tag=v$(cat dist/release-version.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Publish release
         uses: softprops/action-gh-release@v3

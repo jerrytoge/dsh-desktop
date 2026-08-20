@@ -5,7 +5,7 @@
 #   node_modules as real files; Node cannot read inside an asar archive.
 # - extraResources — the bundled Node runtime, placed at Resources/node so the
 #   packaged app has a node binary even though the host has none on PATH.
-# - mac.identity: null — unsigned prototype build (no Developer ID certificate).
+# - mac.identity: "-" — ad-hoc signed build (no Developer ID certificate).
 
 appId: com.deepseek.harness.desktop
 productName: DeepSeek Harness
@@ -45,14 +45,21 @@ extraResources:
 
 mac:
   category: public.app-category.developer-tools
-  identity: null
+  # Ad-hoc signature ("-") gives the app a locally-valid signature without an
+  # Apple Developer certificate. This avoids Gatekeeper's "app is damaged"
+  # rejection for unsigned builds. (Remove the line entirely for a true
+  # Developer ID + notarized release later.)
+  identity: "-"
   target:
     - dir
     - dmg
+  # Entitlements for the ad-hoc signed app. disable-library-validation is
+  # REQUIRED: the sidecar Node loads unsigned native modules (node-pty, koffi,
+  # sharp, …) which hardened runtime would otherwise reject at launch.
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   # Release signing (requires a Developer ID Application certificate and an
   # Apple ID for notarization) would add:
   #   hardenedRuntime: true
   #   gatekeeperAssess: false
-  #   entitlements: build/entitlements.mac.plist
-  #   entitlementsInherit: build/entitlements.mac.plist
   #   notarize: true
