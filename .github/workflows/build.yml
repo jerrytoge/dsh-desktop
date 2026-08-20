@@ -43,11 +43,11 @@ jobs:
 
       # PR: build the unpacked .app only (fast verification, no zip/dmg).
       # main / tag / manual: full build (dir + zip + dmg) for release.
-      - name: Build app (PR: dir only)
+      - name: "Build app (PR: dir only)"
         if: github.event_name == 'pull_request'
         run: npm run build:dir
 
-      - name: Build app (full: dir + zip + dmg)
+      - name: "Build app (full: dir + zip + dmg)"
         if: github.event_name != 'pull_request'
         run: npm run build
 
