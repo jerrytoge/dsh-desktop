@@ -39,6 +39,28 @@ jobs:
         # otherwise electron-builder auto-detects CI and tries to publish.
         run: npm run build
 
+      - name: Verify no dsh packages were pruned
+        run: |
+          SRC_DIR="node_modules/@deepseek-ai"
+          APP_DIR="dist/mac-arm64/DeepSeek Harness.app/Contents/Resources/app/node_modules/@deepseek-ai"
+          if [ ! -d "$APP_DIR" ]; then
+            echo "ERROR: packaged node_modules not found at: $APP_DIR"
+            exit 1
+          fi
+          MISSING=$(comm -23 <(ls "$SRC_DIR" | sort) <(ls "$APP_DIR" | sort))
+          echo "source @deepseek-ai packages: $(ls "$SRC_DIR" | wc -l | tr -d ' ')"
+          echo "packaged @deepseek-ai packages: $(ls "$APP_DIR" | wc -l | tr -d ' ')"
+          if [ -n "$MISSING" ]; then
+            echo ""
+            echo "ERROR: these @deepseek-ai packages were pruned from the packaged app:"
+            echo "$MISSING"
+            echo ""
+            echo "They are peer dependencies that electron-builder's production pruning"
+            echo "removed. Add them as direct dependencies in package.json, then re-run."
+            exit 1
+          fi
+          echo "OK: all @deepseek-ai packages present in the packaged app"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
