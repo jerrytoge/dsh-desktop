@@ -85,16 +85,20 @@ jobs:
           fi
           echo "OK: all @deepseek-ai packages present in the packaged app"
 
+      - name: Collect release artifacts
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p release
+          cp dist/*.dmg release/
+          cp release-version.txt release/
+
       - name: Upload artifact (full build only)
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v7
         with:
           name: dsh-desktop-macos
-          path: |
-            dist/*.app/**/*
-            dist/*.dmg
-            release-version.txt
-          if-no-files-found: warn
+          path: release/
+          if-no-files-found: error
 
   release:
     needs: build
@@ -106,17 +110,17 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: dsh-desktop-macos
-          path: dist
+          path: release
 
       - name: Generate version tag
         id: tag
         # release-version.txt already contains "<harness>-<run_number>";
         # just prefix "v".
-        run: echo "tag=v$(cat dist/release-version.txt)" >> "$GITHUB_OUTPUT"
+        run: echo "tag=v$(cat release/release-version.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: |
-            dist/*.dmg
+            release/*.dmg
