@@ -209,10 +209,15 @@ function startSidecar(port) {
 
   // A script entry (bundled bin.js) is run through the resolved Node;
   // a command/shim entry (shebang) is spawned directly.
+  //
+  // `--no-open` stops `dsh web` from handing the URL off to the system's
+  // default browser — this shell already shows the page in its own
+  // BrowserWindow, so the second browser tab it would otherwise open is nothing
+  // but a duplicate.
   const argv0 = script ? resolveNode() : cmd;
   const args = script
-    ? [script, 'web', '--port', String(port)]
-    : ['web', '--port', String(port)];
+    ? [script, 'web', '--port', String(port), '--no-open']
+    : ['web', '--port', String(port), '--no-open'];
 
   log('spawn sidecar:', argv0, args.join(' '));
 

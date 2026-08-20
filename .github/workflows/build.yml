@@ -3,11 +3,18 @@ name: Build macOS App
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
+# Narrowest permissions. `release` job re-declares what it needs; `build`
+# only needs read (default). No top-level write grant leaks to other jobs.
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -34,9 +41,14 @@ jobs:
       - name: Fetch bundled Node runtime
         run: npm run fetch-node
 
-      - name: Build app (dir + zip)
-        # publish is disabled via `publish: null` in electron-builder.yml;
-        # otherwise electron-builder auto-detects CI and tries to publish.
+      # PR: build the unpacked .app only (fast verification, no zip/dmg).
+      # main / tag / manual: full build (dir + zip + dmg) for release.
+      - name: Build app (PR: dir only)
+        if: github.event_name == 'pull_request'
+        run: npm run build:dir
+
+      - name: Build app (full: dir + zip + dmg)
+        if: github.event_name != 'pull_request'
         run: npm run build
 
       - name: Verify no dsh packages were pruned
@@ -61,21 +73,25 @@ jobs:
           fi
           echo "OK: all @deepseek-ai packages present in the packaged app"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload artifact (full build only)
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v6
         with:
           name: dsh-desktop-macos
           path: |
             dist/*.app/**/*
             dist/*.zip
+            dist/*.dmg
           if-no-files-found: warn
 
   release:
     needs: build
-    if: github.ref == 'refs/heads/main'
-    runs-on: macos-latest
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest   # releasing needs no macOS — saves runner minutes
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: dsh-desktop-macos
           path: dist
@@ -85,7 +101,9 @@ jobs:
         run: echo "tag=v$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/*.dmg
