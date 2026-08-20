@@ -11,6 +11,11 @@ appId: com.deepseek.harness.desktop
 productName: DeepSeek Harness
 copyright: Copyright © 2025
 
+# Disable electron-builder's implicit publish. In CI it auto-detects the
+# environment and tries to publish to GitHub Releases (needing GH_TOKEN);
+# we publish ourselves via the workflow's upload-artifact + action-gh-release.
+publish: null
+
 directories:
   output: dist
   buildResources: build
