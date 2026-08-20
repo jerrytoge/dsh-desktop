@@ -35,7 +35,10 @@ jobs:
         run: npm run fetch-node
 
       - name: Build app (dir + zip)
-        run: npm run build
+        # --publish never: electron-builder auto-detects CI and would try to
+        # publish to GitHub Releases, requiring a GH_TOKEN. We publish ourselves
+        # via upload-artifact + action-gh-release below.
+        run: npm run build -- --publish never
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
