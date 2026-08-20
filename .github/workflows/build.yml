@@ -13,15 +13,21 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 26
           cache: npm
 
       - name: Install dependencies
         run: npm ci
+
+      # electron@43+ no longer downloads its binary via postinstall; it is
+      # fetched lazily on first `electron .` or on demand via install.js.
+      # electron-builder reads node_modules/electron/dist, so fetch it explicitly.
+      - name: Download Electron binary
+        run: node node_modules/electron/install.js
 
       # B2: fetch the bundled Node runtime (darwin-arm64) instead of
       # committing a 138MB binary to git. Mirrors the local `npm run fetch-node`.
