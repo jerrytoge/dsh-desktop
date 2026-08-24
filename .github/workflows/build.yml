@@ -25,9 +25,10 @@ jobs:
       # This project is a pnpm workspace (packageManager + pnpm-lock.yaml), so the
       # install step must use pnpm. `npm ci` would read the stale package-lock.json
       # (if any) and fail on the pnpm-only dependencies.
+      # pnpm/action-setup reads the exact pnpm version (including integrity)
+      # from package.json#packageManager. Do not also set `version` here: v4
+      # rejects duplicate version sources even when their semantic versions match.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11.22.0
 
       - uses: actions/setup-node@v5
         with:
