@@ -1,0 +1,5 @@
+# Desktop-only additive settings section. It does not alter or replace the
+# official plugin inventory/settings rows shipped by dsh-web-app.
+- insert:
+    - id: ui-settings-desktop-personal
+      name: '@local/dsh-client-ui-settings-desktop'

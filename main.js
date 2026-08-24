@@ -11,13 +11,15 @@
 //   3. node_modules/.bin/dsh    — local bin shim
 //   4. dsh on PATH
 
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const net = require('node:net');
 const path = require('node:path');
 const fs = require('node:fs');
 const semver = require('semver');
+const { createDesktopServices } = require('./lib/desktop-services');
+const { healProfileManifestsSync } = require('./lib/profile-manager');
 
 const SMOKE = process.env.DSH_SMOKE === '1';
 const HOST = process.env.DSH_HOST || '127.0.0.1';
@@ -27,6 +29,7 @@ const PORT_OVERRIDE = process.env.DSH_PORT ? Number(process.env.DSH_PORT) : unde
 let win = null;
 /** @type {import('node:child_process').ChildProcess | null} */
 let sidecar = null;
+const intentionallyStoppedSidecars = new WeakSet();
 let quitting = false;
 let currentUrl = null;
 let smokeDone = false;
@@ -211,8 +214,40 @@ function onSidecarGone(err) {
   app.quit();
 }
 
+function ensureDesktopPluginFallback() {
+  const packageDir = path.join(__dirname, 'packages', 'dsh-client-ui-settings-desktop');
+  if (!fs.existsSync(path.join(packageDir, 'package.json'))) return false;
+  const dshHome = path.resolve(process.env.DSH_HOME || path.join(app.getPath('home'), '.dsh'));
+  const link = path.join(dshHome, 'profiles', 'node_modules', '@local', 'dsh-client-ui-settings-desktop');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  try {
+    const stat = fs.lstatSync(link);
+    if (!stat.isSymbolicLink()) throw new Error(`Desktop plugin fallback exists and is not a symlink: ${link}`);
+    const current = fs.realpathSync(link);
+    if (current === fs.realpathSync(packageDir)) return true;
+    fs.unlinkSync(link);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  fs.symlinkSync(packageDir, link, 'junction');
+  return true;
+}
+
 function startSidecar(port) {
   const { cmd, script } = resolveDsh();
+  const desktopPatch = path.join(__dirname, 'desktop.cordis.patch.yml');
+  const desktopPluginReady = ensureDesktopPluginFallback();
+
+  // Heal any BOM-prefixed plugin manifest before DSH boots: Node/DSH parse
+  // package.json with strict JSON.parse, so a plugin shipped with a UTF-8 BOM
+  // would crash the sidecar on the very first import.
+  try {
+    const profileDir = path.resolve(process.env.DSH_HOME || path.join(app.getPath('home'), '.dsh'), 'profiles', 'web');
+    const healed = healProfileManifestsSync(profileDir);
+    if (healed.length) log('healed BOM manifests:', healed.join(', '));
+  } catch (error) {
+    log('heal BOM manifests skipped:', error && error.message ? error.message : error);
+  }
 
   // A script entry (bundled bin.js) is run through the resolved Node;
   // a command/shim entry (shebang) is spawned directly.
@@ -222,9 +257,10 @@ function startSidecar(port) {
   // BrowserWindow, so the second browser tab it would otherwise open is nothing
   // but a duplicate.
   const argv0 = script ? resolveNode() : cmd;
-  const args = script
-    ? [script, 'web', '--port', String(port), '--no-open']
-    : ['web', '--port', String(port), '--no-open'];
+  const webArgs = ['web'];
+  if (desktopPluginReady && fs.existsSync(desktopPatch)) webArgs.push('--patch', desktopPatch);
+  webArgs.push('--port', String(port), '--no-open');
+  const args = script ? [script, ...webArgs] : webArgs;
 
   log('spawn sidecar:', argv0, args.join(' '));
 
@@ -243,8 +279,8 @@ function startSidecar(port) {
   child.once('error', (err) => onSidecarGone(err));
   child.once('exit', (code, signal) => {
     log('sidecar exited', { code, signal });
-    sidecar = null;
-    if (!quitting) {
+    if (sidecar === child) sidecar = null;
+    if (!quitting && !intentionallyStoppedSidecars.has(child)) {
       onSidecarGone(new Error(`dsh exited (code ${code}, signal ${signal})`));
     }
   });
@@ -256,6 +292,7 @@ function killSidecar() {
   if (!sidecar) return;
   const c = sidecar;
   sidecar = null;
+  intentionallyStoppedSidecars.add(c);
   try {
     c.kill('SIGTERM');
   } catch {}
@@ -294,7 +331,7 @@ function recover(reason) {
   }
 }
 
-async function recoverSidecar(reason) {
+async function recoverSidecar(reason, requested = false) {
   if (quitting || SMOKE) return;
   log('recover: restarting sidecar —', reason);
   try {
@@ -303,9 +340,11 @@ async function recoverSidecar(reason) {
     currentUrl = `http://${HOST}:${port}/`;
     sidecar = startSidecar(port);
     await waitForHttp(currentUrl);
-    recover('sidecar restarted');
+    if (requested && win && !win.isDestroyed()) await win.loadURL(currentUrl);
+    else recover('sidecar restarted');
   } catch (err) {
     fatal('recover: sidecar restart failed:', err && err.message);
+    throw err;
   }
 }
 
@@ -426,11 +465,41 @@ function createWindow(url) {
   win.loadURL(url);
 }
 
+// ── Desktop companion IPC ──────────────────────────────────────────────────
+
+let desktopServices = null;
+
+function registerDesktopIpc() {
+  desktopServices = createDesktopServices({
+    appDir: __dirname,
+    resourcesPath: process.resourcesPath,
+    isPackaged: app.isPackaged,
+    nodePath: resolveNode(),
+    env: process.env,
+    homeDir: app.getPath('home'),
+    onRestart: () => recoverSidecar('requested by Desktop settings', true),
+  });
+  ipcMain.handle('dsh-desktop:invoke', async (event, request) => {
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
+      return { ok: false, error: { code: 'UNTRUSTED_CALLER', message: 'Desktop API is restricted to the main application frame' } };
+    }
+    const senderUrl = new URL(event.senderFrame.url);
+    if (senderUrl.protocol !== 'http:' || senderUrl.hostname !== HOST || senderUrl.port !== String(new URL(currentUrl).port)) {
+      return { ok: false, error: { code: 'UNTRUSTED_ORIGIN', message: 'Desktop API call came from an unexpected origin' } };
+    }
+    if (!request || typeof request.method !== 'string' || request.payload !== undefined && (typeof request.payload !== 'object' || request.payload === null)) {
+      return { ok: false, error: { code: 'INVALID_REQUEST', message: 'Malformed Desktop API request' } };
+    }
+    return desktopServices.invoke(request.method, request.payload);
+  });
+}
+
 // ── boot ───────────────────────────────────────────────────────────────────
 
 async function boot() {
   let port;
   try {
+    if (!desktopServices) registerDesktopIpc();
     port = PORT_OVERRIDE || (await pickPort());
     currentUrl = `http://${HOST}:${port}/`;
     sidecar = startSidecar(port);

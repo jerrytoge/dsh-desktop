@@ -7,3 +7,5 @@ out/
 .dsh-smoke/
 .electron-cache/
 .electron-user-data/
+.cache/
+.bin/

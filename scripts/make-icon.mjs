@@ -1,23 +1,29 @@
 // Build the macOS app icon (build/icon.icns) from the DeepSeek whale logo.
 //
-// The whale path is read directly from the harness's own favicon
-// (node_modules/@deepseek-ai/dsh-web-frontend/dist/favicon.svg), which is the
-// official DeepSeek whale. We recolor it to the DeepSeek brand blue (#4D6BFE)
-// on a white background, render every iconset size with sharp, then run
-// iconutil to produce the .icns.
+// The official whale path is preserved. DSH Desktop uses a two-tone purple
+// treatment: the host core stays bright purple while the tail and lower fin
+// use a darker purple to suggest attachable plugin modules. Every iconset size
+// is rendered with sharp before iconutil produces the .icns.
 
 import sharp from 'sharp';
 import { execSync } from 'node:child_process';
-import { readFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import {
+  readFileSync,
+  mkdirSync,
+  rmSync,
+  existsSync,
+  readdirSync,
+} from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const BLUE = '#4D6BFE'; // DeepSeek brand blue
+const PRIMARY = '#654CFF';
+const MODULE = '#3824C7';
 const BG = '#FFFFFF';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
-const faviconPath = path.join(
+const linkedFavicon = path.join(
   root,
   'node_modules',
   '@deepseek-ai',
@@ -25,6 +31,28 @@ const faviconPath = path.join(
   'dist',
   'favicon.svg'
 );
+const pnpmRoot = path.join(root, 'node_modules', '.pnpm');
+const pnpmPackage = existsSync(pnpmRoot)
+  ? readdirSync(pnpmRoot).find((name) =>
+      name.startsWith('@deepseek-ai+dsh-web-frontend@')
+    )
+  : undefined;
+const pnpmFavicon = pnpmPackage
+  ? path.join(
+      pnpmRoot,
+      pnpmPackage,
+      'node_modules',
+      '@deepseek-ai',
+      'dsh-web-frontend',
+      'dist',
+      'favicon.svg'
+    )
+  : '';
+const faviconPath = existsSync(linkedFavicon) ? linkedFavicon : pnpmFavicon;
+if (!faviconPath || !existsSync(faviconPath)) {
+  console.error('make-icon: could not locate the official favicon.svg');
+  process.exit(1);
+}
 
 const favicon = readFileSync(faviconPath, 'utf8');
 const match = favicon.match(/\bd="([^"]+)"/);
@@ -52,10 +80,21 @@ function whaleSvg(size) {
   const target = size * 0.78; // whale occupies 78% of the canvas
   const scale = target / 50; // favicon viewBox is 50x50
   const pad = (size - target) / 2;
+  const transform = `translate(${pad.toFixed(2)},${pad.toFixed(2)}) scale(${scale.toFixed(4)})`;
+  const unit = size / 1024;
+  const n = (value) => (value * unit).toFixed(2);
+
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-  <rect width="${size}" height="${size}" fill="${BG}"/>
-  <g transform="translate(${pad.toFixed(2)},${pad.toFixed(2)}) scale(${scale.toFixed(4)})">
-    <path d="${whale}" fill="${BLUE}" fill-rule="nonzero"/>
+  <rect width="${size}" height="${size}" rx="${n(220)}" fill="${BG}"/>
+  <defs>
+    <clipPath id="whale-clip">
+      <path d="${whale}" transform="${transform}" fill-rule="nonzero"/>
+    </clipPath>
+  </defs>
+  <path d="${whale}" transform="${transform}" fill="${PRIMARY}" fill-rule="nonzero"/>
+  <g clip-path="url(#whale-clip)" fill="${MODULE}" transform="scale(${unit.toFixed(6)})">
+    <path d="M748 135 C690 194 735 260 684 326 C664 352 665 381 684 412 L970 412 L970 120 Z"/>
+    <path d="M674 704 C710 675 778 680 823 714 C854 738 859 772 840 803 C816 840 747 852 696 824 C650 799 642 746 674 704 Z"/>
   </g>
 </svg>`;
 }

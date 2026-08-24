@@ -35,7 +35,11 @@ npmRebuild: false
 files:
   - main.js
   - preload.js
+  - desktop.cordis.patch.yml
+  - lib/**/*
   - package.json
+  - packages/dsh-client-ui-settings-desktop/package.json
+  - packages/dsh-client-ui-settings-desktop/lib/**/*
 
 extraResources:
   - from: node

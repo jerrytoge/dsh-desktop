@@ -9,10 +9,13 @@
   "scripts": {
     "start": "electron .",
     "smoke": "DSH_SMOKE=1 electron .",
+    "test": "node --test test/*.test.js",
     "make-icon": "node scripts/make-icon.mjs",
     "fetch-node": "node scripts/fetch-node.mjs",
-    "build": "electron-builder --mac",
-    "build:dir": "electron-builder --mac dir"
+    "fetch-electron": "node scripts/fetch-electron.mjs",
+    "prepare:build": "node scripts/fetch-electron.mjs",
+    "build": "node scripts/fetch-electron.mjs && electron-builder --mac",
+    "build:dir": "node scripts/fetch-electron.mjs && electron-builder --mac dir"
   },
   "dependencies": {
     "@deepseek-ai/cordis-plugin-group": "^1.0.1",
@@ -35,6 +38,10 @@
     "@deepseek-ai/dsh-subprocess": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-timeout": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-workflow": "^0.1.0-rc.8",
+    "@local/dsh-client-ui-settings-desktop": "file:packages/dsh-client-ui-settings-desktop",
+    "dshmarket": "1.21.2",
+    "js-yaml": "^4.1.0",
+    "pnpm": "11.22.0",
     "semver": "^7.8.5"
   },
   "devDependencies": {
@@ -46,5 +53,6 @@
     "@deepseek-ai/dsh-subprocess-local@0.1.0-rc.8": true,
     "koffi@3.1.5": true,
     "node-pty@1.2.0-beta.15": true
-  }
+  },
+  "packageManager": "pnpm@11.22.0+sha512.1ff870c4c6133dfd88fb2afc46dd13d47f09c9794b438c6fdb47ca98caf3bc16381ee0be93a091b8e3824cf01f889f46d7d9e20910fb0be1ab0fb5baa80dd621"
 }
