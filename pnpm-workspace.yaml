@@ -5,12 +5,12 @@ overrides:
   'app-builder-lib>@electron/get': 4.0.3
 
 allowBuilds:
-  '@deepseek-ai/dsh-subprocess-local': set this to true or false
-  '@google/genai': set this to true or false
-  electron-winstaller: set this to true or false
-  koffi: set this to true or false
-  node-pty: set this to true or false
-  protobufjs: set this to true or false
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': false
+  electron-winstaller: false
+  koffi: true
+  node-pty: true
+  protobufjs: false
 
 minimumReleaseAgeExclude:
   - dshmarket@1.21.2

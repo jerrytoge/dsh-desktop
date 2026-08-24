@@ -2,6 +2,8 @@ node_modules/
 dist/
 node/
 out/
+package-lock.json
+npm-shrinkwrap.json
 *.log
 .DS_Store
 .dsh-smoke/

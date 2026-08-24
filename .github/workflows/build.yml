@@ -22,13 +22,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # This project is a pnpm workspace (packageManager + pnpm-lock.yaml), so the
+      # install step must use pnpm. `npm ci` would read the stale package-lock.json
+      # (if any) and fail on the pnpm-only dependencies.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+
       - uses: actions/setup-node@v5
         with:
           node-version: 26
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # Derive the app version from the harness version + the run_number, so
       # (a) the filename/tag track the bundled harness, and (b) app-only
@@ -49,19 +56,19 @@ jobs:
         run: node node_modules/electron/install.js
 
       # B2: fetch the bundled Node runtime (darwin-arm64) instead of
-      # committing a 138MB binary to git. Mirrors the local `npm run fetch-node`.
+      # committing a 138MB binary to git. Mirrors the local `pnpm run fetch-node`.
       - name: Fetch bundled Node runtime
-        run: npm run fetch-node
+        run: pnpm run fetch-node
 
       # PR: build the unpacked .app only (fast verification, no zip/dmg).
       # main / tag / manual: full build (dir + zip + dmg) for release.
       - name: "Build app (PR: dir only)"
         if: github.event_name == 'pull_request'
-        run: npm run build:dir
+        run: pnpm run build:dir
 
       - name: "Build app (full: dir + zip + dmg)"
         if: github.event_name != 'pull_request'
-        run: npm run build
+        run: pnpm run build
 
       - name: Verify no dsh packages were pruned
         run: |
