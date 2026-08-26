@@ -40,6 +40,8 @@ files:
   - package.json
   - packages/dsh-client-ui-settings-desktop/package.json
   - packages/dsh-client-ui-settings-desktop/lib/**/*
+  - packages/dsh-agent-communication-policy/package.json
+  - packages/dsh-agent-communication-policy/lib/**/*
 
 extraResources:
   - from: node

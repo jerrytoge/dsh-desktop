@@ -2,7 +2,7 @@ packages:
   - packages/*
 
 overrides:
-  'app-builder-lib>@electron/get': 4.0.3
+  'app-builder-lib>@electron/get': 5.1.0
 
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
@@ -13,4 +13,5 @@ allowBuilds:
   protobufjs: false
 
 minimumReleaseAgeExclude:
-  - dshmarket@1.21.2
+  - dshmarket@1.21.2 || 1.29.3
+  - js-yaml@5.4.0

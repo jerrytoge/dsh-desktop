@@ -3,3 +3,8 @@
 - insert:
     - id: ui-settings-desktop-personal
       name: '@local/dsh-client-ui-settings-desktop'
+
+    # Uniform observable behavior across models (quiet | milestones | frequent):
+    # a static communication-policy prompt section, defaulting to milestones.
+    - id: agent-communication-policy
+      name: '@local/dsh-agent-communication-policy'

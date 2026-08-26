@@ -214,23 +214,38 @@ function onSidecarGone(err) {
   app.quit();
 }
 
+// Symlink every local plugin package (packages/*) into the profile's
+// node_modules/@local so the sidecar can resolve the `@local/*` rows that
+// desktop.cordis.patch.yml inserts. Returns false when there is nothing to
+// link, so callers can skip the patch overlay entirely.
 function ensureDesktopPluginFallback() {
-  const packageDir = path.join(__dirname, 'packages', 'dsh-client-ui-settings-desktop');
-  if (!fs.existsSync(path.join(packageDir, 'package.json'))) return false;
+  const packagesDir = path.join(__dirname, 'packages');
   const dshHome = path.resolve(process.env.DSH_HOME || path.join(app.getPath('home'), '.dsh'));
-  const link = path.join(dshHome, 'profiles', 'node_modules', '@local', 'dsh-client-ui-settings-desktop');
-  fs.mkdirSync(path.dirname(link), { recursive: true });
-  try {
-    const stat = fs.lstatSync(link);
-    if (!stat.isSymbolicLink()) throw new Error(`Desktop plugin fallback exists and is not a symlink: ${link}`);
-    const current = fs.realpathSync(link);
-    if (current === fs.realpathSync(packageDir)) return true;
-    fs.unlinkSync(link);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
+  const localDir = path.join(dshHome, 'profiles', 'node_modules', '@local');
+  let linked = 0;
+  if (fs.existsSync(packagesDir)) {
+    for (const entry of fs.readdirSync(packagesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const packageDir = path.join(packagesDir, entry.name);
+      if (!fs.existsSync(path.join(packageDir, 'package.json'))) continue;
+      const link = path.join(localDir, entry.name);
+      fs.mkdirSync(path.dirname(link), { recursive: true });
+      try {
+        const stat = fs.lstatSync(link);
+        if (!stat.isSymbolicLink()) throw new Error(`Desktop plugin fallback exists and is not a symlink: ${link}`);
+        if (fs.realpathSync(link) === fs.realpathSync(packageDir)) {
+          linked += 1;
+          continue;
+        }
+        fs.unlinkSync(link);
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+      fs.symlinkSync(packageDir, link, 'junction');
+      linked += 1;
+    }
   }
-  fs.symlinkSync(packageDir, link, 'junction');
-  return true;
+  return linked > 0;
 }
 
 function startSidecar(port) {

@@ -1,0 +1,15 @@
+{
+  "name": "@local/dsh-agent-communication-policy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "description": "Unify observable agent behavior across models: an agent-scoped communication-policy prompt section with static quiet | milestones | frequent tiers.",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  }
+}

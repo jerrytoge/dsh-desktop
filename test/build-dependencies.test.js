@@ -27,5 +27,5 @@ test('electron-builder resolves an electron-get cache-mode API', () => {
   assert.equal(electronGet.ElectronDownloadCacheMode.ReadWrite, 0);
   const electronGetEntry = builderRequire.resolve('@electron/get');
   const electronGetPackage = JSON.parse(fs.readFileSync(path.join(electronGetEntry, '..', '..', 'package.json'), 'utf8'));
-  assert.equal(electronGetPackage.version, '4.0.3');
+  assert.equal(electronGetPackage.version, '5.1.0');
 });
