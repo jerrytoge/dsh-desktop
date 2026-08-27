@@ -27,6 +27,20 @@ electronDist: node_modules/electron/dist
 
 asar: false
 
+# Keep only the Electron/Chromium locales used by the product. The web UI ships
+# its own translations, so this only affects Chromium-owned menus/error pages.
+electronLanguages:
+  - en
+  - zh_CN
+
+# Prefer release size over build speed for the distributable DMG/zip.
+compression: maximum
+
+# Remove optional native binaries for platforms other than the only supported
+# target. The hook asserts all required darwin-arm64 binaries exist and verifies
+# that the complete @deepseek-ai package set remains unchanged.
+afterPack: scripts/after-pack.cjs
+
 # The harness runs under the BUNDLED Node (not Electron), so its native modules
 # (sharp, node-pty, …) must stay on the Node ABI. Disable electron-builder's
 # automatic @electron/rebuild step.

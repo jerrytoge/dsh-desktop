@@ -56,6 +56,25 @@ $DSH_HOME/profiles/web（写入插件依赖）
 > 安装、移除、升级插件后请重启桌面应用；`cordis.patch.yml` 则遵循 DSH 热更新，
 > 无需重启。
 
+### Desktop 内置插件
+
+除 DSH 官方的 `@deepseek-ai/dsh-base` 和 `@deepseek-ai/dsh-web-app` Bundle 外，
+Desktop 还随 App 打包并默认加载以下桌面专属插件：
+
+| 插件 | 作用 |
+|---|---|
+| `@local/dsh-client-ui-settings-desktop` | 在设置中增加“个人扩展”页面，用于管理个人安装的插件、重启 sidecar，以及安装或修复 Desktop 命令行入口。 |
+| `@local/dsh-agent-communication-policy` | 向 agent system prompt 注入统一的沟通行为约定，使不同模型在任务进度、阻塞反馈和最终总结方面保持一致。 |
+
+这些插件位于仓库的 `packages/` 目录，由 `desktop.cordis.patch.yml` 挂载，只服务于
+Desktop，不会写入用户 profile 的直接依赖，也不会出现在“个人扩展”的可移除列表中。
+
+沟通策略插件支持三档策略：`quiet`（仅保留必要反馈）、`milestones`（在关键节点
+反馈，Desktop 默认值）和 `frequent`（每个操作前后均反馈）。可在 **Desktop 设置 →
+沟通策略** 中切换；保存后 Desktop 会重启 sidecar 并应用到后续会话。选择结果持久化在
+`$DSH_HOME/desktop/settings.json`。该策略只影响 agent 的过程沟通提示，不会修改
+agent loop、模型适配器、UI 或会话事件。
+
 ### Desktop 个人扩展管理
 
 Desktop 会额外挂载一个独立的“个人扩展”设置页，但不会修改或替换 DSH

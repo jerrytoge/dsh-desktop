@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld('dshDesktop', {
     repair: () => invoke('command.install'),
     remove: () => invoke('command.remove'),
   },
+  communicationPolicy: {
+    get: () => invoke('communicationPolicy.get'),
+    setTier: (tier) => invoke('communicationPolicy.setTier', { tier }),
+  },
   sidecar: {
     restart: () => invoke('sidecar.restart'),
   },

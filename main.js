@@ -19,6 +19,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const semver = require('semver');
 const { createDesktopServices } = require('./lib/desktop-services');
+const { readTierSync: readCommunicationPolicyTierSync } = require('./lib/communication-policy-settings');
 const { healProfileManifestsSync } = require('./lib/profile-manager');
 
 const SMOKE = process.env.DSH_SMOKE === '1';
@@ -284,7 +285,7 @@ function startSidecar(port) {
 
   const child = spawn(argv0, args, {
     cwd,
-    env: { ...process.env, FORCE_COLOR: '1' },
+    env: { ...process.env, FORCE_COLOR: '1', DSH_DESKTOP_COMMUNICATION_POLICY_TIER: readCommunicationPolicyTierSync(process.env) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

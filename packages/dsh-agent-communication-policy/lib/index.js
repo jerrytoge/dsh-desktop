@@ -30,7 +30,8 @@ export const DEFAULT_TIER = "milestones";
  * @returns the resolved tier.
  */
 export function resolveConfig(config) {
-  const raw = config && typeof config === "object" ? config.tier : undefined;
+  const configured = config && typeof config === "object" ? config.tier : undefined;
+  const raw = configured === undefined ? process.env.DSH_DESKTOP_COMMUNICATION_POLICY_TIER : configured;
   if (raw === undefined) return DEFAULT_TIER;
   if (typeof raw !== "string" || !TIERS.includes(raw)) {
     throw new Error(

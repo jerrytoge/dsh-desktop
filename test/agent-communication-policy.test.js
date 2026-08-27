@@ -77,7 +77,12 @@ test('plugin: config resolution defaults to milestones and validates tiers', asy
   // No config -> milestones default
   assert.equal(plugin.resolveConfig(undefined), 'milestones');
   assert.equal(plugin.resolveConfig({}), 'milestones');
-  // Explicit tiers pass through
+  const previous = process.env.DSH_DESKTOP_COMMUNICATION_POLICY_TIER;
+  process.env.DSH_DESKTOP_COMMUNICATION_POLICY_TIER = 'frequent';
+  assert.equal(plugin.resolveConfig({}), 'frequent');
+  if (previous === undefined) delete process.env.DSH_DESKTOP_COMMUNICATION_POLICY_TIER;
+  else process.env.DSH_DESKTOP_COMMUNICATION_POLICY_TIER = previous;
+  // Explicit tiers pass through and override the Desktop setting
   assert.equal(plugin.resolveConfig({ tier: 'quiet' }), 'quiet');
   assert.equal(plugin.resolveConfig({ tier: 'frequent' }), 'frequent');
   // Unknown tiers throw

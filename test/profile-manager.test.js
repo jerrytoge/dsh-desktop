@@ -23,13 +23,19 @@ test('parseInstallSpec accepts registry specs and rejects local paths/options', 
 test('inventory only returns personal direct dependencies and reads BOM manifests', async () => {
   const dir = await fixture();
   await fs.mkdir(path.join(dir, 'node_modules', 'personal-plugin'), { recursive: true });
-  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ dependencies: { 'personal-plugin': '^1.0.0' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'personal-plugin'] } } }));
-  await fs.writeFile(path.join(dir, 'node_modules', 'personal-plugin', 'package.json'), `\ufeff${JSON.stringify({ name: 'personal-plugin', version: '1.2.0', dsh: { bundle: { patch: './cordis.patch.yml' } } })}`);
+  await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({ dependencies: { 'personal-plugin': '^1.0.0', 'plain-lib': '^1.0.0' }, dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'personal-plugin'] } } }));
+  await fs.writeFile(path.join(dir, 'node_modules', 'personal-plugin', 'package.json'), `\ufeff${JSON.stringify({ name: 'personal-plugin', version: '1.2.0', description: 'A personal  test\n   plugin', dsh: { bundle: { patch: './cordis.patch.yml' } } })}`);
+  await fs.mkdir(path.join(dir, 'node_modules', 'plain-lib'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'node_modules', 'plain-lib', 'package.json'), JSON.stringify({ name: 'plain-lib', version: '1.0.0' }));
   const result = await inspectProfile(dir);
-  assert.equal(result.plugins.length, 1);
+  assert.equal(result.plugins.length, 2);
   assert.equal(result.plugins[0].packageName, 'personal-plugin');
   assert.equal(result.plugins[0].installedVersion, '1.2.0');
   assert.equal(result.plugins[0].activeBundle, true);
+  // description is read from the installed manifest and whitespace-collapsed
+  assert.equal(result.plugins[0].description, 'A personal test plugin');
+  // packages without a description surface null
+  assert.equal(result.plugins[1].description, null);
 });
 
 test('reconciliation preserves official bundles and updates personal bundles', async () => {
