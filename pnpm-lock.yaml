@@ -84,8 +84,8 @@ importers:
         specifier: ^5.4.0
         version: 5.4.1
       pnpm:
-        specifier: 11.24.0
-        version: 11.24.0
+        specifier: 11.25.0
+        version: 11.25.0
       semver:
         specifier: ^7.8.5
         version: 7.8.5
@@ -3759,8 +3759,8 @@ packages:
     resolution: {integrity: sha512-ZIfcLJC+7E7FBFnDxm9MPmt7D+DidyQ26lewieO75AdhA2ayMtsJSES0iWzqJQbcVRSrTufQoy0DR94xHue0oA==}
     engines: {node: '>=10.4.0'}
 
-  pnpm@11.24.0:
-    resolution: {integrity: sha512-vSfjRel23LC+C3oSKCF7BJqBfiGx81XJDb59xGZxiVqLwebQbCRVRQXqk+oLRfSJon7Bv7yN5qlln8oPFvoAAA==}
+  pnpm@11.25.0:
+    resolution: {integrity: sha512-XN6SW08HX3Jetx+64YpC/+eEUkeJ8ZthxzHLhyHsKKruFg4BqNWvT+2ypCzb8wDv4j2zVrDUoXtNY+EfirfJVg==}
     engines: {node: '>=22.13'}
     hasBin: true
 
@@ -8401,7 +8401,7 @@ snapshots:
       base64-js: 1.5.1
       xmlbuilder: 15.1.1
 
-  pnpm@11.24.0: {}
+  pnpm@11.25.0: {}
 
   postject@1.0.0-alpha.6:
     dependencies:
