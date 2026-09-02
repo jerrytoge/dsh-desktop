@@ -4,7 +4,14 @@
   "extends": ["config:recommended"],
   "packageRules": [
     {
+      "matchPackageNames": ["*"],
+      "enabled": false
+    },
+    {
       "matchPackageNames": ["/^@deepseek-ai\\//"],
+      "enabled": true,
+      "ignoreUnstable": false,
+      "allowedVersions": "!/-alpha(?:\\.|$)/",
       "groupName": "deepseek-harness",
       "groupSlug": "deepseek-harness"
     }
