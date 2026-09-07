@@ -259,10 +259,19 @@ function ensureDesktopPluginFallback() {
       fs.mkdirSync(path.dirname(link), { recursive: true });
       try {
         const stat = fs.lstatSync(link);
-        if (!stat.isSymbolicLink()) throw new Error(`Desktop plugin fallback exists and is not a symlink: ${link}`);
-        if (fs.realpathSync(link) === fs.realpathSync(packageDir)) {
-          linked += 1;
-          continue;
+        if (!stat.isSymbolicLink()) {
+          throw new Error(`Desktop plugin fallback exists and is not a symlink: ${link}`);
+        }
+        // Reuse the link only when it resolves to this bundle's package dir.
+        // A stale/broken symlink (realpath throws ENOENT) or one pointing
+        // elsewhere must be replaced, otherwise `symlinkSync` below hits EEXIST.
+        try {
+          if (fs.realpathSync(link) === fs.realpathSync(packageDir)) {
+            linked += 1;
+            continue;
+          }
+        } catch {
+          // broken link: fall through to unlink + recreate.
         }
         fs.unlinkSync(link);
       } catch (error) {
