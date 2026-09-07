@@ -203,6 +203,32 @@ function waitForHttp(url, timeoutMs = 45000) {
 
 // ── sidecar lifecycle ──────────────────────────────────────────────────────
 
+// `dsh web` prints the authenticated root URL (carrying the process launch
+// token) as `dsh web: <href>` on stdout. The web server refuses the bare
+// origin with 401 ("dsh web authentication required") unless the browser opens
+// the token-bearing URL first, so the shell must capture and load that URL
+// rather than the bare `http://127.0.0.1:<port>/` it binds.
+let sidecarRootUrl = null;
+let sidecarUrlResolve = null;
+let sidecarUrlPromise = null;
+
+function resetSidecarUrl() {
+  sidecarRootUrl = null;
+  sidecarUrlPromise = new Promise((resolve) => { sidecarUrlResolve = resolve; });
+}
+resetSidecarUrl();
+
+function waitForSidecarUrl(timeoutMs = 30000) {
+  if (sidecarRootUrl) return Promise.resolve(sidecarRootUrl);
+  let timer;
+  return Promise.race([
+    sidecarUrlPromise,
+    new Promise((_r, reject) => {
+      timer = setTimeout(() => reject(new Error(`timed out waiting for dsh web to print its URL (${timeoutMs}ms)`)), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 function onSidecarGone(err) {
   if (quitting) return;
   fatal('sidecar gone:', err && err.message ? err.message : err);
@@ -253,6 +279,8 @@ function startSidecar(port) {
   const { cmd, script } = resolveDsh();
   const desktopPatch = path.join(__dirname, 'desktop.cordis.patch.yml');
   const desktopPluginReady = ensureDesktopPluginFallback();
+  // Each sidecar start issues a fresh launch token, so reset the captured URL.
+  resetSidecarUrl();
 
   // Heal any BOM-prefixed plugin manifest before DSH boots: Node/DSH parse
   // package.json with strict JSON.parse, so a plugin shipped with a UTF-8 BOM
@@ -271,7 +299,9 @@ function startSidecar(port) {
   // `--no-open` stops `dsh web` from handing the URL off to the system's
   // default browser — this shell already shows the page in its own
   // BrowserWindow, so the second browser tab it would otherwise open is nothing
-  // but a duplicate.
+  // but a duplicate. `dsh web` prints the token-bearing root URL to stdout by
+  // default (printUrl=true), so this shell captures it to load the
+  // authenticated origin rather than the bare one.
   const argv0 = script ? resolveNode() : cmd;
   const webArgs = ['web'];
   if (desktopPluginReady && fs.existsSync(desktopPatch)) webArgs.push('--patch', desktopPatch);
@@ -289,7 +319,18 @@ function startSidecar(port) {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  child.stdout.on('data', (d) => process.stdout.write(d.toString()));
+  child.stdout.on('data', (d) => {
+    const text = d.toString();
+    process.stdout.write(text);
+    const match = text.match(/dsh web:\s+(http:\/\/\S+)/);
+    if (match) {
+      const url = match[1].replace(/\s+\(LAN:.*$/, '');
+      if (url && !sidecarRootUrl) {
+        sidecarRootUrl = url;
+        sidecarUrlResolve(url);
+      }
+    }
+  });
   child.stderr.on('data', (d) => process.stderr.write(d.toString()));
 
   child.once('error', (err) => onSidecarGone(err));
@@ -353,8 +394,9 @@ async function recoverSidecar(reason, requested = false) {
   try {
     killSidecar();
     const port = PORT_OVERRIDE || (await pickPort());
-    currentUrl = `http://${HOST}:${port}/`;
     sidecar = startSidecar(port);
+    const printedUrl = await waitForSidecarUrl();
+    currentUrl = printedUrl || `http://${HOST}:${port}/`;
     await waitForHttp(currentUrl);
     if (requested && win && !win.isDestroyed()) await win.loadURL(currentUrl);
     else recover('sidecar restarted');
@@ -517,8 +559,11 @@ async function boot() {
   try {
     if (!desktopServices) registerDesktopIpc();
     port = PORT_OVERRIDE || (await pickPort());
-    currentUrl = `http://${HOST}:${port}/`;
     sidecar = startSidecar(port);
+    // Load the token-bearing URL `dsh web` prints, not the bare origin: the
+    // web server answers the bare origin with 401 (auth required).
+    const printedUrl = await waitForSidecarUrl();
+    currentUrl = printedUrl || `http://${HOST}:${port}/`;
     await waitForHttp(currentUrl);
     createWindow(currentUrl);
 
