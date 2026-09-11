@@ -23,6 +23,29 @@ const { readTierSync: readCommunicationPolicyTierSync } = require('./lib/communi
 const { healProfileManifestsSync } = require('./lib/profile-manager');
 
 const SMOKE = process.env.DSH_SMOKE === '1';
+// Must precede requestSingleInstanceLock: never signal/focus the user's app.
+if (SMOKE && process.env.DSH_SMOKE_USER_DATA) {
+  app.setPath('userData', path.resolve(process.env.DSH_SMOKE_USER_DATA));
+  app.setPath('sessionData', path.resolve(process.env.DSH_SMOKE_USER_DATA));
+  app.setPath('home', path.resolve(process.env.HOME));
+}
+
+async function waitForSmokeUi(contents) {
+  const deadline = Date.now() + 40000;
+  while (Date.now() < deadline) {
+    const ready = await contents.executeJavaScript(`(async () => {
+      const plugin = document.querySelector('style[data-plugin-css="dsh-desktop-settings"]');
+      const controls = [...document.querySelectorAll('button, input, [role="button"]')]
+        .some(el => el.getBoundingClientRect().width > 0);
+      if (!plugin || !controls || !document.body.innerText.trim() || !window.dshDesktop) return false;
+      const result = await window.dshDesktop.communicationPolicy.get();
+      return result && result.ok === true;
+    })()`);
+    if (ready) return;
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error('UI/plugin/IPC readiness deadline exceeded');
+}
 const HOST = process.env.DSH_HOST || '127.0.0.1';
 const PORT_OVERRIDE = process.env.DSH_PORT ? Number(process.env.DSH_PORT) : undefined;
 
@@ -478,11 +501,17 @@ function createWindow(url) {
 
   win.webContents.on('did-finish-load', () => {
     log('READY', url);
-    startWatchdogs();
+    if (!SMOKE) startWatchdogs();
     if (SMOKE) {
-      smokeDone = true;
-      log('SMOKE_OK');
-      setTimeout(() => app.quit(), 500);
+      waitForSmokeUi(win.webContents).then(() => {
+        smokeDone = true;
+        log('SMOKE_OK');
+        app.quit();
+      }).catch(error => {
+        fatal('SMOKE_FAIL:', error.message);
+        killSidecar();
+        app.exit(1);
+      });
     }
   });
 

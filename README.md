@@ -151,9 +151,56 @@ macOS arm64 Electron。可用 `ELECTRON_MIRROR` 指定镜像。
 
 ## 自动更新
 
-项目用 [Renovate](https://github.com/renovatebot/renovate) 跟踪
-`@deepseek-ai/dsh` 的新版本，自动开 PR 同步依赖；合并后 CI 自动打包并发布新
-Release。
+采用「自动提 PR → 验证成品 → 人工合并 → 发布完整 App」流程，不在已安装的
+App 内执行 `pnpm update`，也不热替换 Harness。
+
+### 自动 PR
+
+[Renovate](https://github.com/renovatebot/renovate) 跟踪 DeepSeek 包，排除 alpha，
+等待版本发布 **48 小时**后提出分组更新。自动合并已关闭。除依赖及本地插件 peer
+依赖外，regex manager 同步根应用版本和 `allowScripts` 中的 Harness 精确版本；
+pnpm manager 负责更新锁文件。若 Renovate 的 artifact 更新失败，不应合并只有
+manifest 的 PR，可用下面的脚本修复。仓库需要保持 Renovate GitHub App 启用。
+
+### 人工升级 / 修复更新 PR
+
+使用仓库固定的 pnpm 和可用的 Node：
+
+```sh
+pnpm run update:harness -- 0.1.5-rc.1
+# 仅在明确决定提前试用时跳过 48 小时观察期：
+pnpm run update:harness -- 0.1.5-rc.1 --bypass-release-age
+pnpm run check:harness
+pnpm test
+```
+
+脚本验证发布包，统一同步应用版本、现有 Harness 直接依赖、本地插件 peer 依赖及
+现有脚本许可，然后运行安装、更新锁文件并输出依赖变化。新功能包优先由 Harness
+的传递依赖引入，不把所有 npm 上的新包盲目加为直接依赖。若安装失败，改动保留供
+诊断；修复后重跑，不应提交半完成的锁文件。提前试用时 pnpm 可能写入精确版本的
+`minimumReleaseAgeExclude`，应一并 review，禁止用全局关闭保护代替。
+
+### 合并门禁
+
+CI 在修改发行构建号之前执行冻结锁文件安装、版本一致性检查和单元测试。随后构建
+macOS `.app`，核对 DeepSeek 依赖未被裁剪，并执行隔离成品冒烟测试：
+
+```sh
+pnpm run fetch-node
+pnpm run build:dir
+pnpm run smoke:packaged
+```
+
+冒烟测试使用临时数据目录，不使用个人 profile；运行打包成品而不是另起开发服务器。
+成品启动失败会阻止构建任务通过及后续发布。请在 GitHub 分支保护中将此 workflow 的
+`build` 检查设为必需检查，并要求 PR review（这些是仓库服务端设置，不由本地配置
+自动启用）。
+
+### 安装与回退
+
+合并 main 后，CI 发布完整安装包；客户端仍提示前往 Releases 下载。保留旧版安装包
+方便回退，但会话数据格式迁移不保证向后兼容，升级前应备份数据。Developer ID
+签名、公证和 `electron-updater` 一键更新属于后续阶段，本流程不引入这些能力。
 
 ## License
 

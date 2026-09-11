@@ -39,6 +39,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check Harness version consistency
+        run: pnpm run check:harness
+
+      - name: Run unit tests
+        run: pnpm test
+
       # Derive the app version from the harness version + the run_number, so
       # (a) the filename/tag track the bundled harness, and (b) app-only
       # stability releases still count as "newer" (run_number increases).
@@ -93,6 +99,10 @@ jobs:
             exit 1
           fi
           echo "OK: all @deepseek-ai packages present in the packaged app"
+
+      - name: Smoke test isolated packaged app
+        timeout-minutes: 5
+        run: pnpm run smoke:packaged
 
       - name: Collect release artifacts
         if: github.event_name != 'pull_request'

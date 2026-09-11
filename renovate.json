@@ -2,6 +2,20 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "mode": "full",
   "extends": ["config:recommended"],
+  "automerge": false,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^package\\.json$/"],
+      "matchStrings": [
+        "\"version\":\\s*\"(?<currentValue>[^\"]+)\"",
+        "\"@deepseek-ai/dsh-subprocess-local@(?<currentValue>[^\"]+)\":\\s*true"
+      ],
+      "depNameTemplate": "@deepseek-ai/dsh",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "semver"
+    }
+  ],
   "packageRules": [
     {
       "matchPackageNames": ["*"],
@@ -12,6 +26,9 @@
       "enabled": true,
       "ignoreUnstable": false,
       "allowedVersions": "!/-alpha(?:\\.|$)/",
+      "minimumReleaseAge": "2 days",
+      "minimumReleaseAgeBehaviour": "timestamp-required",
+      "rangeStrategy": "bump",
       "groupName": "deepseek-harness",
       "groupSlug": "deepseek-harness"
     }
