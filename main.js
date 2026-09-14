@@ -11,7 +11,7 @@
 //   3. node_modules/.bin/dsh    — local bin shim
 //   4. dsh on PATH
 
-const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, shell, ipcMain, Menu, Notification, Tray, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const net = require('node:net');
@@ -22,6 +22,10 @@ const { createDesktopServices } = require('./lib/desktop-services');
 const { readTierSync: readCommunicationPolicyTierSync } = require('./lib/communication-policy-settings');
 const { healProfileManifestsSync } = require('./lib/profile-manager');
 const { pickDmgAsset, verifyFile, downloadAsset } = require('./lib/update-download');
+const { CANCEL_URL, formatBytes, formatProgress, buildProgressHtml } = require('./lib/update-progress');
+const { createUpdateTracker } = require('./lib/update-state');
+const { UPDATE_MENU_ITEM_ID, buildMenuTemplate, buildTrayMenuTemplate } = require('./lib/update-menu');
+const { createTrayIcon } = require('./lib/tray-icon');
 
 const SMOKE = process.env.DSH_SMOKE === '1';
 // Must precede requestSingleInstanceLock: never signal/focus the user's app.
@@ -132,6 +136,17 @@ function resolveNode() {
 // the bundled harness version via Renovate). Opt-out with DSH_UPDATE_CHECK=0;
 // any network error is logged and ignored.
 const UPDATE_CHECK_DISABLED = ['0', 'false'].includes(String(process.env.DSH_UPDATE_CHECK || '').toLowerCase());
+// Re-check while the app stays open (a window left running for days should still
+// notice a release). Clamped so a bad env value cannot hammer the GitHub API.
+const UPDATE_INTERVAL_MS = (() => {
+  const raw = Number(process.env.DSH_UPDATE_INTERVAL_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return 6 * 3600 * 1000;
+  return Math.max(raw, 60 * 1000);
+})();
+// Tick coarsely instead of sleeping for hours: a missed tick during system
+// sleep still re-evaluates on wake, because isDue() compares timestamps.
+const UPDATE_TICK_MS = Math.min(UPDATE_INTERVAL_MS, 15 * 60 * 1000);
+const updateTracker = createUpdateTracker({ intervalMs: UPDATE_INTERVAL_MS });
 const GITHUB_API = (process.env.DSH_GITHUB_API || 'https://api.github.com').replace(/\/+$/, '');
 const REPO = process.env.DSH_REPO || 'jerrytoge/dsh-desktop';
 const RELEASES_PAGE = process.env.DSH_UPDATE_URL || `https://github.com/${REPO}/releases`;
@@ -193,10 +208,58 @@ function updateDownloadDir() {
   return path.join(app.getPath('userData'), 'updates');
 }
 
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '未知大小';
-  const mb = bytes / (1024 * 1024);
-  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
+// A small dedicated window, because the Dock progress bar alone was invisible
+// feedback: with the Dock hidden (or simply not watched) the app looked frozen
+// for the whole multi-minute download.
+function createUpdateProgressWindow(version, onCancel) {
+  const progressWin = new BrowserWindow({
+    width: 460,
+    height: 196,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: '正在下载更新',
+    parent: win && !win.isDestroyed() ? win : undefined,
+    show: false,
+    autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+
+  let userCancelled = false;
+  let dismissed = false;
+  const requestCancel = () => {
+    if (userCancelled || dismissed) return;
+    userCancelled = true;
+    onCancel();
+  };
+
+  progressWin.webContents.on('will-navigate', (event, url) => {
+    // The page has no preload/IPC; a cancel is just a navigation we intercept.
+    if (String(url).startsWith(CANCEL_URL)) {
+      event.preventDefault();
+      requestCancel();
+    }
+  });
+  // Closing the window counts as cancelling too.
+  progressWin.on('closed', () => {
+    if (!dismissed) requestCancel();
+  });
+  progressWin.once('ready-to-show', () => progressWin.show());
+  progressWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildProgressHtml({ version }))}`);
+
+  return {
+    paint(data) {
+      if (dismissed || progressWin.isDestroyed()) return;
+      progressWin.webContents
+        .executeJavaScript(`window.__setProgress(${JSON.stringify(data)})`)
+        .catch(() => {});
+    },
+    close() {
+      dismissed = true;
+      if (!progressWin.isDestroyed()) progressWin.close();
+    },
+  };
 }
 
 async function offerDownloadedImage(file, summary) {
@@ -239,6 +302,7 @@ async function runUpdateDownload(info, asset) {
   const dest = path.join(dir, asset.name);
   const expectedSize = Number(asset.size);
   const expectedDigest = asset.digest;
+  let progress = null;
   try {
     // A previous run may have already fetched a still-valid artefact; retrying
     // the mount should not cost another ~170MB.
@@ -249,16 +313,25 @@ async function runUpdateDownload(info, asset) {
     }
 
     updateDownloadAbort = new AbortController();
+    progress = createUpdateProgressWindow(info.latest, () => {
+      log('update download cancelled by user');
+      if (updateDownloadAbort) updateDownloadAbort.abort();
+    });
+
+    const startedAt = Date.now();
     let lastPaint = 0;
     const onProgress = ({ received, total }) => {
-      if (!win || win.isDestroyed()) return;
       const now = Date.now();
-      if (now - lastPaint < 150 && (!total || received < total)) return;
+      if (now - lastPaint < 200 && received < total) return;
       lastPaint = now;
-      win.setProgressBar(total > 0 ? Math.min(received / total, 1) : 2);
+      progress.paint({ phase: '正在下载更新…', ...formatProgress({ received, total, startedAt }) });
+      if (win && !win.isDestroyed()) {
+        win.setProgressBar(total > 0 ? Math.min(received / total, 1) : 2);
+      }
     };
 
     if (win && !win.isDestroyed()) win.setProgressBar(0);
+    progress.paint({ phase: '正在下载更新…', percent: 0, detail: '正在连接…' });
     await downloadAsset({
       url: asset.browser_download_url,
       dest,
@@ -267,8 +340,10 @@ async function runUpdateDownload(info, asset) {
       onProgress,
       signal: updateDownloadAbort.signal,
     });
+    progress.paint({ phase: '下载完成，正在校验…', percent: 100, detail: formatBytes(expectedSize) });
     await pruneOldDownloads(dir, asset.name);
     if (win && !win.isDestroyed()) win.setProgressBar(-1);
+    progress.close();
     await offerDownloadedImage(dest, `版本：${info.latest}｜大小：${formatBytes(expectedSize)}`);
   } catch (err) {
     if (err && err.name === 'AbortError') {
@@ -276,6 +351,7 @@ async function runUpdateDownload(info, asset) {
       return;
     }
     log('update download failed:', err && err.message);
+    if (progress) progress.close();
     const { response } = await dialog
       .showMessageBox(win, {
         type: 'error',
@@ -289,6 +365,7 @@ async function runUpdateDownload(info, asset) {
       .catch(() => ({ response: 1 }));
     if (response === 0) shell.openExternal(info.releaseUrl || RELEASES_PAGE);
   } finally {
+    if (progress) progress.close();
     updateDownloadAbort = null;
     if (win && !win.isDestroyed()) win.setProgressBar(-1);
   }
@@ -300,7 +377,7 @@ async function promptUpdate(info) {
   const asset = process.platform === 'darwin' ? pickDmgAsset(info.assets, process.arch) : null;
   const buttons = asset ? ['下载并安装', '前往下载页', '稍后'] : ['前往下载页', '稍后'];
   const detail = asset
-    ? `当前版本：${info.current}\n最新版本：${info.latest}\n\n将下载 ${asset.name}（${formatBytes(Number(asset.size))}）并校验完整性，然后打开磁盘映像。`
+    ? `当前版本：${info.current}\n最新版本：${info.latest}`
     : `当前版本：${info.current}\n最新版本：${info.latest}\n\n可在 GitHub Releases 下载新版本。`;
   const { response } = await dialog
     .showMessageBox(win, {
@@ -315,6 +392,170 @@ async function promptUpdate(info) {
     .catch(() => ({ response: buttons.length - 1 }));
   if (asset && response === 0) return runUpdateDownload(info, asset);
   if (response === (asset ? 1 : 0)) shell.openExternal(info.releaseUrl || RELEASES_PAGE);
+}
+
+// ── persistent update entry + periodic checks ──────────────────────────────
+
+let updateTray = null;
+
+function setUpdateBadge() {
+  // Dock badge is the passive half of the entry: it stays visible after the
+  // dialog is dismissed, so an available update cannot be silently forgotten.
+  try {
+    if (process.platform === 'darwin' && app.dock) app.dock.setBadge(updateTracker.badge());
+  } catch (err) {
+    log('dock badge failed (ignored):', err && err.message);
+  }
+}
+
+function refreshUpdateMenu() {
+  const item = Menu.getApplicationMenu()?.getMenuItemById(UPDATE_MENU_ITEM_ID);
+  if (item) item.label = updateTracker.menuLabel();
+}
+
+// The Dock badge says "something is available" but offers nothing to click.
+// The tray is the same signal, made actionable: it appears in the menu bar only
+// when there is an update, and one click opens a menu whose default entry runs
+// the update. It disappears again once the app is up to date.
+function syncUpdateTray() {
+  if (process.platform !== 'darwin') return;
+  const { hasUpdate, latest, current, info, status } = updateTracker.state;
+
+  if (!hasUpdate) {
+    if (updateTray) {
+      updateTray.destroy();
+      updateTray = null;
+    }
+    return;
+  }
+
+  try {
+    if (!updateTray) {
+      updateTray = new Tray(createTrayIcon(nativeImage));
+      updateTray.setToolTip('DeepSeek Harness 有新版本');
+    }
+    updateTray.setContextMenu(
+      Menu.buildFromTemplate(
+        buildTrayMenuTemplate({
+          current,
+          latest,
+          checking: status === 'checking',
+          onUpdate: () => {
+            Promise.resolve(openUpdateEntry()).catch((err) => log('update prompt failed:', err && err.message));
+          },
+          onOpenReleases: () => shell.openExternal((info && info.releaseUrl) || RELEASES_PAGE),
+          onCheckForUpdates: () =>
+            runUpdateCheck({ manual: true }).catch((err) => log('manual update check failed:', err && err.message)),
+          onQuit: () => app.quit(),
+        })
+      )
+    );
+  } catch (err) {
+    // A menu-bar icon is a nicety; never let it take down the shell.
+    log('update tray failed (ignored):', err && err.message);
+    updateTray = null;
+  }
+}
+
+function buildApplicationMenu() {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      buildMenuTemplate({
+        platform: process.platform,
+        appName: app.name,
+        updateLabel: updateTracker.menuLabel(),
+        onCheckForUpdates: () => {
+          // Acts when a release is already known, otherwise checks.
+          Promise.resolve(openUpdateEntry()).catch((err) =>
+            log('manual update check failed:', err && err.message)
+          );
+        },
+      })
+    )
+  );
+}
+
+// Clicking the persistent entry must always produce a visible outcome.
+// When a release is already known this acts on it directly instead of spending
+// a network round trip on a check whose result the user already knows — that
+// path used to end in silence, which made the entry look broken.
+function openUpdateEntry() {
+  const action = updateTracker.clickAction();
+  if (action === 'update') {
+    updateTracker.markNotified();
+    return promptUpdate(updateTracker.state.info);
+  }
+  if (action === 'wait') return undefined;
+  return runUpdateCheck({ manual: true });
+}
+
+async function runUpdateCheck({ manual = false } = {}) {
+  if (updateTracker.state.status === 'checking') return;
+  updateTracker.markChecking();
+  refreshUpdateMenu();
+  syncUpdateTray();
+
+  let info = null;
+  try {
+    info = await checkForUpdate();
+  } catch (err) {
+    log('update check threw (ignored):', err && err.message);
+  }
+
+  const { shouldPrompt, becameAvailable } = updateTracker.record(info);
+  refreshUpdateMenu();
+  setUpdateBadge();
+  syncUpdateTray();
+
+  if (!info) {
+    // Only a user-initiated check deserves an error; a periodic failure is
+    // logged and retried on the next tick.
+    if (manual) await dialog.showMessageBox(win, { type: 'warning', title: '检查更新', message: '无法检查更新', detail: '请稍后重试，或前往 GitHub Releases 查看。' }).catch(() => {});
+    return;
+  }
+
+  if (manual && !info.hasUpdate) {
+    await dialog.showMessageBox(win, { type: 'info', title: '检查更新', message: '当前已是最新版本', detail: `版本：${info.current}` }).catch(() => {});
+    return;
+  }
+
+  // A manual check always answers. Suppressing the dialog when the version was
+  // already announced is right for periodic checks, but wrong for a click: the
+  // user just asked for the update and must not be met with silence.
+  if (shouldPrompt || manual) {
+    updateTracker.markNotified();
+    await promptUpdate(info);
+    return;
+  }
+
+  // Already told the user about this version: rely on the badge and menu, but
+  // reach out once when the update first appears while the window is in the
+  // background, so an open app is not silently stuck on an old build.
+  if (becameAvailable && win && !win.isDestroyed() && !win.isFocused() && Notification.isSupported()) {
+    try {
+      const notice = new Notification({ title: 'DeepSeek Harness 有新版本', body: `${info.latest}（当前 ${info.current}）` });
+      notice.on('click', () => {
+        if (win && !win.isDestroyed()) {
+          win.show();
+          win.focus();
+        }
+      });
+      notice.show();
+    } catch (err) {
+      log('update notification failed (ignored):', err && err.message);
+    }
+  }
+}
+
+function startPeriodicUpdateChecks() {
+  const timer = setInterval(() => {
+    if (updateTracker.isDue()) {
+      runUpdateCheck().catch((err) => log('periodic update check failed:', err && err.message));
+    }
+  }, UPDATE_TICK_MS);
+  // Never hold the event loop open on account of the update timer.
+  if (typeof timer.unref === 'function') timer.unref();
+  return timer;
 }
 
 // ── readiness / port helpers ───────────────────────────────────────────────
@@ -732,15 +973,11 @@ async function boot() {
     await waitForHttp(currentUrl);
     createWindow(currentUrl);
 
-    // Check GitHub Releases for a newer desktop build (non-blocking, silent
-    // on failure). Skipped during smoke tests and when opted out.
+    // First update check, plus the periodic re-check that keeps a long-lived
+    // window aware of new releases. Skipped during smoke tests and when opted out.
     if (!UPDATE_CHECK_DISABLED && !SMOKE) {
-      checkForUpdate()
-        .then((info) => {
-          if (info && info.hasUpdate) return promptUpdate(info);
-          return undefined;
-        })
-        .catch((err) => log('update prompt failed (ignored):', err && err.message));
+      runUpdateCheck().catch((err) => log('update check failed (ignored):', err && err.message));
+      startPeriodicUpdateChecks();
     }
 
     // Smoke watchdog: if the page never reports ready, fail instead of hanging.
@@ -781,7 +1018,12 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(boot);
+  app.whenReady().then(() => {
+    // The menu carries the always-present update entry, so it must exist before
+    // the user can interact with the window.
+    buildApplicationMenu();
+    return boot();
+  });
 
   // Closing the window also shuts down the sidecar: a wrapper should not leave
   // a headless server running after the user closes the UI.
@@ -791,6 +1033,11 @@ if (!gotLock) {
     quitting = true;
     // Drop an in-flight update download instead of leaving a stale .part file.
     if (updateDownloadAbort) updateDownloadAbort.abort();
+    // A menu-bar icon outliving the app would be an orphan in the menu bar.
+    if (updateTray) {
+      updateTray.destroy();
+      updateTray = null;
+    }
     killSidecar();
   });
 
