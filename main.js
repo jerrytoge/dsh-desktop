@@ -21,6 +21,7 @@ const semver = require('semver');
 const { createDesktopServices } = require('./lib/desktop-services');
 const { readTierSync: readCommunicationPolicyTierSync } = require('./lib/communication-policy-settings');
 const { healProfileManifestsSync } = require('./lib/profile-manager');
+const { pickDmgAsset, verifyFile, downloadAsset } = require('./lib/update-download');
 
 const SMOKE = process.env.DSH_SMOKE === '1';
 // Must precede requestSingleInstanceLock: never signal/focus the user's app.
@@ -129,8 +130,7 @@ function resolveNode() {
 // Detects whether a newer desktop release exists on GitHub Releases and
 // prompts once. The app version is read from package.json (kept in sync with
 // the bundled harness version via Renovate). Opt-out with DSH_UPDATE_CHECK=0;
-// any network error is logged and ignored.
-const UPDATE_CHECK_DISABLED = ['0', 'false'].includes(String(process.env.DSH_UPDATE_CHECK || '').toLowerCase());
+// any network error is logged and ignored.const UPDATE_CHECK_DISABLED = ['0', 'false'].includes(String(process.env.DSH_UPDATE_CHECK || '').toLowerCase());
 const GITHUB_API = (process.env.DSH_GITHUB_API || 'https://api.github.com').replace(/\/+$/, '');
 const REPO = process.env.DSH_REPO || 'jerrytoge/dsh-desktop';
 const RELEASES_PAGE = process.env.DSH_UPDATE_URL || `https://github.com/${REPO}/releases`;
@@ -163,7 +163,13 @@ async function checkForUpdate() {
     // version means an app-only stability release, which also counts as newer.
     const latest = (data && data.tag_name || '').replace(/^v/, '');
     if (!latest) return null;
-    return { current, latest, hasUpdate: semver.gt(latest, current) };
+    return {
+      current,
+      latest,
+      hasUpdate: semver.gt(latest, current),
+      releaseUrl: data.html_url || RELEASES_PAGE,
+      assets: Array.isArray(data.assets) ? data.assets : [],
+    };
   } catch (err) {
     log('update check failed (ignored):', err && err.message);
     return null;
@@ -172,22 +178,142 @@ async function checkForUpdate() {
   }
 }
 
-function promptUpdate(info) {
+// ── assisted update (download + verify + open) ─────────────────────────────
+//
+// Full self-install is intentionally out of scope: macOS auto-update runs
+// through Squirrel.Mac, which requires a Developer ID signature this
+// prototype does not have. Instead the shell downloads the release .dmg,
+// verifies GitHub's published sha256 digest, and opens it so the user only
+// has to drag the app across.
+
+let updateDownloadAbort = null;
+
+function updateDownloadDir() {
+  return path.join(app.getPath('userData'), 'updates');
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '未知大小';
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
+}
+
+async function offerDownloadedImage(file, summary) {
+  const { response } = await dialog
+    .showMessageBox(win, {
+      type: 'info',
+      title: '更新已下载',
+      message: '安装包已下载并通过完整性校验',
+      detail: `将打开磁盘映像，把「DeepSeek Harness」拖入「应用程序」即可完成更新。\n\n${summary}`,
+      buttons: ['打开磁盘映像', '在访达中显示', '稍后'],
+      defaultId: 0,
+      cancelId: 2,
+    })
+    .catch(() => ({ response: 2 }));
+  if (response === 0) {
+    // openPath mounts the .dmg — exactly the manual step this replaces.
+    const failure = await shell.openPath(file).catch(() => 'open failed');
+    if (failure) shell.showItemInFolder(file);
+  } else if (response === 1) {
+    shell.showItemInFolder(file);
+  }
+}
+
+async function pruneOldDownloads(dir, keepName) {
+  let entries;
+  try {
+    entries = await fs.promises.readdir(dir);
+  } catch {
+    return;
+  }
+  await Promise.all(
+    entries
+      .filter((name) => name !== keepName && (name.endsWith('.dmg') || name.endsWith('.part')))
+      .map((name) => fs.promises.rm(path.join(dir, name), { force: true }).catch(() => {}))
+  );
+}
+
+async function runUpdateDownload(info, asset) {
+  const dir = updateDownloadDir();
+  const dest = path.join(dir, asset.name);
+  const expectedSize = Number(asset.size);
+  const expectedDigest = asset.digest;
+  try {
+    // A previous run may have already fetched a still-valid artefact; retrying
+    // the mount should not cost another ~170MB.
+    const existing = await verifyFile(dest, { expectedSize, expectedDigest });
+    if (existing.ok) {
+      await offerDownloadedImage(dest, `版本：${info.latest}`);
+      return;
+    }
+
+    updateDownloadAbort = new AbortController();
+    let lastPaint = 0;
+    const onProgress = ({ received, total }) => {
+      if (!win || win.isDestroyed()) return;
+      const now = Date.now();
+      if (now - lastPaint < 150 && (!total || received < total)) return;
+      lastPaint = now;
+      win.setProgressBar(total > 0 ? Math.min(received / total, 1) : 2);
+    };
+
+    if (win && !win.isDestroyed()) win.setProgressBar(0);
+    await downloadAsset({
+      url: asset.browser_download_url,
+      dest,
+      expectedSize,
+      expectedDigest,
+      onProgress,
+      signal: updateDownloadAbort.signal,
+    });
+    await pruneOldDownloads(dir, asset.name);
+    if (win && !win.isDestroyed()) win.setProgressBar(-1);
+    await offerDownloadedImage(dest, `版本：${info.latest}｜大小：${formatBytes(expectedSize)}`);
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      log('update download aborted');
+      return;
+    }
+    log('update download failed:', err && err.message);
+    const { response } = await dialog
+      .showMessageBox(win, {
+        type: 'error',
+        title: '下载失败',
+        message: '无法下载更新',
+        detail: String((err && err.message) || err),
+        buttons: ['前往下载页', '关闭'],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .catch(() => ({ response: 1 }));
+    if (response === 0) shell.openExternal(info.releaseUrl || RELEASES_PAGE);
+  } finally {
+    updateDownloadAbort = null;
+    if (win && !win.isDestroyed()) win.setProgressBar(-1);
+  }
+}
+
+async function promptUpdate(info) {
   if (!win || win.isDestroyed()) return;
-  dialog
+  // Assisted download only makes sense where a .dmg can be opened.
+  const asset = process.platform === 'darwin' ? pickDmgAsset(info.assets, process.arch) : null;
+  const buttons = asset ? ['下载并安装', '前往下载页', '稍后'] : ['前往下载页', '稍后'];
+  const detail = asset
+    ? `当前版本：${info.current}\n最新版本：${info.latest}\n\n将下载 ${asset.name}（${formatBytes(Number(asset.size))}）并校验完整性，然后打开磁盘映像。`
+    : `当前版本：${info.current}\n最新版本：${info.latest}\n\n可在 GitHub Releases 下载新版本。`;
+  const { response } = await dialog
     .showMessageBox(win, {
       type: 'info',
       title: '发现新版本',
       message: 'DeepSeek Harness Desktop 有新版本可用',
-      detail: `当前版本：${info.current}\n最新版本：${info.latest}\n\n可在 GitHub Releases 下载新版本。`,
-      buttons: ['前往下载', '稍后'],
+      detail,
+      buttons,
       defaultId: 0,
-      cancelId: 1,
+      cancelId: buttons.length - 1,
     })
-    .then(({ response }) => {
-      if (response === 0) shell.openExternal(RELEASES_PAGE);
-    })
-    .catch(() => {});
+    .catch(() => ({ response: buttons.length - 1 }));
+  if (asset && response === 0) return runUpdateDownload(info, asset);
+  if (response === (asset ? 1 : 0)) shell.openExternal(info.releaseUrl || RELEASES_PAGE);
 }
 
 // ── readiness / port helpers ───────────────────────────────────────────────
@@ -608,9 +734,12 @@ async function boot() {
     // Check GitHub Releases for a newer desktop build (non-blocking, silent
     // on failure). Skipped during smoke tests and when opted out.
     if (!UPDATE_CHECK_DISABLED && !SMOKE) {
-      checkForUpdate().then((info) => {
-        if (info && info.hasUpdate) promptUpdate(info);
-      });
+      checkForUpdate()
+        .then((info) => {
+          if (info && info.hasUpdate) return promptUpdate(info);
+          return undefined;
+        })
+        .catch((err) => log('update prompt failed (ignored):', err && err.message));
     }
 
     // Smoke watchdog: if the page never reports ready, fail instead of hanging.
@@ -659,6 +788,8 @@ if (!gotLock) {
 
   app.on('before-quit', () => {
     quitting = true;
+    // Drop an in-flight update download instead of leaving a stale .part file.
+    if (updateDownloadAbort) updateDownloadAbort.abort();
     killSidecar();
   });
 

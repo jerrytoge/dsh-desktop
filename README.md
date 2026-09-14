@@ -147,12 +147,32 @@ macOS arm64 Electron。可用 `ELECTRON_MIRROR` 指定镜像。
 | `DSH_BIN` | 指定 `dsh` 入口 |
 | `DSH_PORT` | 固定端口 |
 | `DSH_HOME` | harness 数据目录（默认 `~/.dsh`） |
-| `DSH_UPDATE_CHECK` | 设为 `0` 关闭版本检查 |
+| `DSH_UPDATE_CHECK` | 设为 `0` 关闭版本检查与应用内更新 |
+| `DSH_UPDATE_URL` | 覆盖兜底的 Releases 页面地址 |
+| `DSH_REPO` | 覆盖检查更新所查询的仓库（默认 `jerrytoge/dsh-desktop`） |
 
 ## 自动更新
 
 采用「自动提 PR → 验证成品 → 人工合并 → 发布完整 App」流程，不在已安装的
 App 内执行 `pnpm update`，也不热替换 Harness。
+
+### 应用内更新
+
+App 启动后检查 GitHub Releases，发现新版本时提供三个选项：
+
+| 选项 | 行为 |
+|---|---|
+| 下载并安装 | 在应用内下载 `.dmg`，校验 GitHub 公布的 sha256 摘要，然后打开磁盘映像 |
+| 前往下载页 | 打开 Releases 页面（原行为，作为兜底保留） |
+| 稍后 | 忽略本次提示 |
+
+安装包保存在 `~/Library/Application Support/dsh-desktop/updates/`：下载前会复用已存在
+且校验通过的安装包，完成后清理旧的 `.dmg` 与残留 `.part`；下载进度显示在 Dock 图标上。
+**摘要不符、大小不符、或下载源不是 GitHub 域名时一律拒绝**，并把错误暴露给用户而不
+是静默降级。中途退出 App 会中止下载，不留下半成品文件。
+
+应用内更新**不自动安装**：macOS 自安装走 Squirrel.Mac，要求 Developer ID 签名，而本
+项目当前是 ad-hoc 签名。因此最后一步仍由用户把 App 拖入「应用程序」完成。
 
 ### 自动 PR
 
@@ -215,9 +235,9 @@ pnpm run smoke:packaged
 
 ### 安装与回退
 
-合并 main 后，CI 发布完整安装包；客户端仍提示前往 Releases 下载。保留旧版安装包
-方便回退，但会话数据格式迁移不保证向后兼容，升级前应备份数据。Developer ID
-签名、公证和 `electron-updater` 一键更新属于后续阶段，本流程不引入这些能力。
+合并 main 后，CI 发布完整安装包；已安装的客户端下次启动即可在应用内下载。保留旧版
+安装包方便回退，但会话数据格式迁移不保证向后兼容，升级前应备份数据。Developer ID
+签名、公证与真正的静默自动安装属于后续阶段，本流程不引入这些能力。
 
 ## License
 
