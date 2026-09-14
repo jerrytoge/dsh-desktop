@@ -14,7 +14,7 @@ function fixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'packages/ui'), { recursive: true });
   fs.writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\nminimumReleaseAgeStrict: true\n');
-  const data = { version: OLD, dependencies: { '@deepseek-ai/dsh': `^${OLD}`, '@deepseek-ai/cordis': '^4.0.2' }, allowScripts: { [`@deepseek-ai/dsh-subprocess-local@${OLD}`]: true, 'koffi@3.1.5': false } };
+  const data = { version: OLD, dependencies: { '@deepseek-ai/dsh': `^${OLD}`, '@deepseek-ai/cordis': '^4.0.2' } };
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(data));
   fs.writeFileSync(path.join(root, 'packages/ui/package.json'), JSON.stringify({ version: '0.1.0', peerDependencies: { '@deepseek-ai/dsh-ui': `^${OLD}` } }));
   writeLock(root, OLD);
@@ -33,9 +33,9 @@ test('updater CLI requires canonical explicit target and rejects invalid options
   assert.equal(parseArgs([TARGET, '--bypass-release-age']).bypassReleaseAge, true);
 });
 
-test('synchronize changes only Harness ranges, root version and exact existing allowances', async () => {
+test('synchronize changes only Harness ranges and the root version', async () => {
   const { synchronize } = await api;
-  const source = { version: OLD, dependencies: { '@deepseek-ai/dsh': `^${OLD}`, '@deepseek-ai/dshmarket': '1', '@deepseek-ai/cordis': '^4' }, peerDependencies: { '@deepseek-ai/dsh-ui': '*' }, allowScripts: { [`@deepseek-ai/dsh-helper@${OLD}`]: false, '@deepseek-ai/dsh-helper@*': true, 'koffi@3': true } };
+  const source = { version: OLD, dependencies: { '@deepseek-ai/dsh': `^${OLD}`, '@deepseek-ai/dshmarket': '1', '@deepseek-ai/cordis': '^4' }, peerDependencies: { '@deepseek-ai/dsh-ui': '*' } };
   const result = synchronize(source, TARGET, true);
   assert.equal(source.version, OLD);
   assert.equal(result.version, TARGET);
@@ -43,8 +43,6 @@ test('synchronize changes only Harness ranges, root version and exact existing a
   assert.equal(result.dependencies['@deepseek-ai/dshmarket'], '1');
   assert.equal(result.dependencies['@deepseek-ai/cordis'], '^4');
   assert.equal(result.peerDependencies['@deepseek-ai/dsh-ui'], `^${TARGET}`);
-  assert.equal(result.allowScripts[`@deepseek-ai/dsh-helper@${TARGET}`], false);
-  assert.equal(result.allowScripts['@deepseek-ai/dsh-helper@*'], true);
   assert.equal(synchronize(source, TARGET, false).version, OLD);
 });
 
@@ -100,15 +98,30 @@ test('offline check never fetches installs or writes and detects drift', async t
   assert.equal(fs.readFileSync(path.join(root, 'package.json'), 'utf8'), before);
   await assert.rejects(run({ check: true, target: TARGET }, options), /consistency check failed/);
   const project = readProject(root), lock = yaml.load(fs.readFileSync(path.join(root, 'pnpm-lock.yaml'), 'utf8'));
-  project.manifests[0].data.allowScripts[`@deepseek-ai/dsh-helper@${TARGET}`] = true;
   project.manifests[1].data.peerDependencies['@deepseek-ai/dsh-ui'] = '*';
   lock.importers['.'].dependencies['@deepseek-ai/dsh'].specifier = '*';
   lock.packages[`@deepseek-ai/dsh@${TARGET}`] = {};
   const errors = checkConsistency(project, OLD, lock).join('\n');
-  assert.match(errors, /stale exact allowScripts/);
   assert.match(errors, /expected \^/);
   assert.match(errors, /importer does not match/);
   assert.match(errors, /expected only/);
+});
+
+// Regression: Renovate bumps the dependency ranges as a group and does not (and
+// must not) own the informational root version. That state has to pass CI.
+test('dependency ranges are the source of truth; root version drift only warns', async t => {
+  const { run, readProject, deriveTarget, versionDrift } = await api;
+  const root = fixture(t);
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: OLD, dependencies: { '@deepseek-ai/dsh': `^${TARGET}` } }));
+  fs.writeFileSync(path.join(root, 'packages/ui/package.json'), JSON.stringify({ version: '0.1.0', peerDependencies: { '@deepseek-ai/dsh-ui': `^${TARGET}` } }));
+  writeLock(root, TARGET);
+  const project = readProject(root);
+  assert.equal(deriveTarget(project), TARGET, 'target must come from the dependency ranges, not the stale version');
+  assert.match(versionDrift(project, TARGET), /differs from Harness/);
+  const logs = [];
+  await run({ check: true }, { root, fetchImpl: () => assert.fail('network'), install: () => assert.fail('install'), log: s => logs.push(s) });
+  assert.ok(logs.some(s => s.startsWith('Warning:') && s.includes('differs from Harness')), 'drift must be reported');
+  assert.ok(logs.some(s => s.includes('consistent')), 'drift must not fail the check');
 });
 
 test('pnpm exit status propagates without shell pipeline masking', async t => {
@@ -120,12 +133,11 @@ test('pnpm exit status propagates without shell pipeline masking', async t => {
   assert.doesNotThrow(() => installWithPnpm(root));
 });
 
-test('unsupported workspace layouts and conflicting permissions fail closed', async t => {
-  const { readProject, synchronize } = await api;
+test('unsupported workspace layouts fail closed', async t => {
+  const { readProject } = await api;
   const root = fixture(t);
   fs.writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - plugins/**\n');
   assert.throws(() => readProject(root), /workspace layout/);
-  assert.throws(() => synchronize({ allowScripts: { [`@deepseek-ai/dsh-helper@${OLD}`]: true, [`@deepseek-ai/dsh-helper@${TARGET}`]: false } }, TARGET, true), /Conflicting/);
 });
 
 test('failed install propagates and stale post-install lock fails verification', async t => {

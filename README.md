@@ -157,10 +157,22 @@ App 内执行 `pnpm update`，也不热替换 Harness。
 ### 自动 PR
 
 [Renovate](https://github.com/renovatebot/renovate) 跟踪 DeepSeek 包，排除 alpha，
-等待版本发布 **48 小时**后提出分组更新。自动合并已关闭。除依赖及本地插件 peer
-依赖外，regex manager 同步根应用版本和 `allowScripts` 中的 Harness 精确版本；
-pnpm manager 负责更新锁文件。若 Renovate 的 artifact 更新失败，不应合并只有
-manifest 的 PR，可用下面的脚本修复。仓库需要保持 Renovate GitHub App 启用。
+等待版本发布 **48 小时**后提出分组更新。自动合并已关闭。Renovate **只管理依赖范围**
+（含本地插件 peer 依赖），由其 pnpm manager 一并更新锁文件。
+
+Renovate 刻意不管理根 `version` 字段。早期版本曾用一个 regex manager 去同步它和
+`allowScripts`，但该 manager 复用了 `@deepseek-ai/dsh` 这个 depName，与同一
+`package.json` 里的真实依赖同名；Renovate 按 depName 去重，导致 `@deepseek-ai/dsh`
+本体和它的 ~80 个兄弟包**全都没被更新**，产出的 PR 处于混合版本状态而无法通过 CI。
+因此依赖范围是唯一真源，根 `version` 仅作参考，CI 打包时会用「Harness 版本 +
+run_number」覆盖它。
+
+`package.json` 中的 `allowScripts` 也已删除：pnpm 11 从不读取该键，原先是需要手工
+跟版本的死配置；原生构建许可由 `pnpm-workspace.yaml#allowBuilds` 按包名管理，无需
+随版本更新。
+
+若 Renovate 的 artifact 更新失败，不应合并只有 manifest 的 PR，可用下面的脚本修复。
+仓库需要保持 Renovate GitHub App 启用。
 
 ### 人工升级 / 修复更新 PR
 
@@ -174,9 +186,10 @@ pnpm run check:harness
 pnpm test
 ```
 
-脚本验证发布包，统一同步应用版本、现有 Harness 直接依赖、本地插件 peer 依赖及
-现有脚本许可，然后运行安装、更新锁文件并输出依赖变化。新功能包优先由 Harness
-的传递依赖引入，不把所有 npm 上的新包盲目加为直接依赖。若安装失败，改动保留供
+脚本验证发布包，统一同步应用版本、Harness 直接依赖和本地插件 peer 依赖，然后运行
+安装、更新锁文件并输出依赖变化。新功能包优先由 Harness 的传递依赖引入，不把所有
+npm 上的新包盲目加为直接依赖。一致性检查以**依赖范围**为准，根 `version` 落后只会
+输出警告，不会让 Renovate 的 PR 变红。若安装失败，改动保留供
 诊断；修复后重跑，不应提交半完成的锁文件。提前试用时 pnpm 可能写入精确版本的
 `minimumReleaseAgeExclude`，应一并 review，禁止用全局关闭保护代替。
 

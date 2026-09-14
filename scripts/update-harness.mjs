@@ -17,7 +17,6 @@ const yaml = require('js-yaml');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
 export const isHarness = name => /^@deepseek-ai\/dsh(?:$|-)/.test(name);
-const exactAllowance = key => key.match(/^(@deepseek-ai\/dsh(?:-[^@]+)?)@([^@]+)$/);
 const readJSON = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 const loadYAML = file => yaml.load(fs.readFileSync(file, 'utf8'));
 
@@ -68,16 +67,6 @@ export function synchronize(data, target, isRoot) {
       if (isHarness(name)) result[section][name] = `^${target}`;
     }
   }
-  if (result.allowScripts) {
-    const entries = {};
-    for (const [key, value] of Object.entries(result.allowScripts)) {
-      const match = exactAllowance(key);
-      const next = match && semver.valid(match[2]) ? `${match[1]}@${target}` : key;
-      if (Object.hasOwn(entries, next) && entries[next] !== value) throw new Error(`Conflicting script allowances for ${next}`);
-      entries[next] = value;
-    }
-    result.allowScripts = entries;
-  }
   return result;
 }
 
@@ -93,10 +82,34 @@ export function lockPackages(lock) {
   return result;
 }
 
+// The dependency ranges are the source of truth: Renovate bumps them as a group
+// and cannot be expected to keep the informational root "version" in step.
+// CI derives the shipped version from the installed Harness at build time.
+export function deriveTarget(project) {
+  const versions = new Set();
+  for (const { data } of project.manifests) {
+    for (const section of SECTIONS) {
+      for (const [name, range] of Object.entries(data[section] || {})) {
+        if (isHarness(name) && typeof range === 'string' && range.startsWith('^')) versions.add(range.slice(1));
+      }
+    }
+  }
+  if (versions.size === 1) {
+    const [only] = versions;
+    if (semver.valid(only) === only) return only;
+  }
+  return project.manifests[0].data.version;
+}
+
+export function versionDrift(project, target) {
+  const actual = project.manifests[0].data.version;
+  if (actual === target) return null;
+  return `root version ${actual} differs from Harness ${target}; CI derives the release version at build time, so this is informational only`;
+}
+
 export function checkConsistency(project, target, lock) {
   const errors = [];
   if (semver.valid(target) !== target) return ['Root/target version is not canonical semver'];
-  if (project.manifests[0].data.version !== target) errors.push(`Root version must be ${target}`);
   const locked = lockPackages(lock);
   if (!locked.size) errors.push('Lockfile has no Harness packages');
   for (const [name, versions] of locked) {
@@ -116,10 +129,6 @@ export function checkConsistency(project, target, lock) {
         }
         if (!locked.get(name)?.has(target)) errors.push(`${name}@${target} missing from lockfile packages`);
       }
-    }
-    for (const key of Object.keys(data.allowScripts || {})) {
-      const match = exactAllowance(key);
-      if (match && semver.valid(match[2]) && match[2] !== target) errors.push(`${id} stale exact allowScripts entry: ${key}`);
     }
   }
   return errors;
@@ -174,23 +183,21 @@ export function installWithPnpm(root) {
 
 export async function run(options, { root = ROOT, fetchImpl = fetch, now = Date.now(), install = installWithPnpm, log = console.log } = {}) {
   const project = readProject(root);
-  const target = options.target || project.manifests[0].data.version;
+  const target = options.target || deriveTarget(project);
   if (semver.valid(target) !== target) throw new Error('Target must be an exact canonical semver version');
   const lockFile = path.join(root, 'pnpm-lock.yaml');
   const before = loadYAML(lockFile);
   if (options.check) {
     const errors = checkConsistency(project, target, before);
     if (errors.length) throw new Error(`Harness consistency check failed:\n${errors.join('\n')}`);
+    const drift = versionDrift(project, target);
+    if (drift) log(`Warning: ${drift}`);
     log(`Harness ${target}: manifests and lockfile are consistent (offline check).`);
     return;
   }
   const names = new Set(['@deepseek-ai/dsh']);
   for (const { data } of project.manifests) {
     for (const section of SECTIONS) for (const name of Object.keys(data[section] || {})) if (isHarness(name)) names.add(name);
-    for (const key of Object.keys(data.allowScripts || {})) {
-      const match = exactAllowance(key);
-      if (match && semver.valid(match[2])) names.add(match[1]);
-    }
   }
   const checked = await validatePublished(names, target, { ...options, fetchImpl, now });
   log(`Validated ${checked.length} published Harness packages; release age: ${options.bypassReleaseAge ? 'EXPLICITLY BYPASSED' : 'at least 48h'}.`);
@@ -203,6 +210,8 @@ export async function run(options, { root = ROOT, fetchImpl = fetch, now = Date.
   const after = loadYAML(lockFile);
   const errors = checkConsistency(readProject(root), target, after);
   if (errors.length) throw new Error(`Post-install consistency check failed:\n${errors.join('\n')}`);
+  const drift = versionDrift(readProject(root), target);
+  if (drift) log(`Warning: ${drift}`);
   const oldNames = lockPackages(before), newNames = lockPackages(after);
   log(`Added Harness packages: ${[...newNames.keys()].filter(n => !oldNames.has(n)).sort().join(', ') || '(none)'}`);
   log(`Removed Harness packages: ${[...oldNames.keys()].filter(n => !newNames.has(n)).sort().join(', ') || '(none)'}`);

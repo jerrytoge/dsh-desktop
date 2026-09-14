@@ -3,19 +3,6 @@
   "mode": "full",
   "extends": ["config:recommended"],
   "automerge": false,
-  "customManagers": [
-    {
-      "customType": "regex",
-      "managerFilePatterns": ["/^package\\.json$/"],
-      "matchStrings": [
-        "\"version\":\\s*\"(?<currentValue>[^\"]+)\"",
-        "\"@deepseek-ai/dsh-subprocess-local@(?<currentValue>[^\"]+)\":\\s*true"
-      ],
-      "depNameTemplate": "@deepseek-ai/dsh",
-      "datasourceTemplate": "npm",
-      "versioningTemplate": "semver"
-    }
-  ],
   "packageRules": [
     {
       "matchPackageNames": ["*"],
