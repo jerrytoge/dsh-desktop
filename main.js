@@ -130,7 +130,8 @@ function resolveNode() {
 // Detects whether a newer desktop release exists on GitHub Releases and
 // prompts once. The app version is read from package.json (kept in sync with
 // the bundled harness version via Renovate). Opt-out with DSH_UPDATE_CHECK=0;
-// any network error is logged and ignored.const UPDATE_CHECK_DISABLED = ['0', 'false'].includes(String(process.env.DSH_UPDATE_CHECK || '').toLowerCase());
+// any network error is logged and ignored.
+const UPDATE_CHECK_DISABLED = ['0', 'false'].includes(String(process.env.DSH_UPDATE_CHECK || '').toLowerCase());
 const GITHUB_API = (process.env.DSH_GITHUB_API || 'https://api.github.com').replace(/\/+$/, '');
 const REPO = process.env.DSH_REPO || 'jerrytoge/dsh-desktop';
 const RELEASES_PAGE = process.env.DSH_UPDATE_URL || `https://github.com/${REPO}/releases`;
