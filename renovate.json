@@ -12,6 +12,7 @@
       "matchPackageNames": ["/^@deepseek-ai\\//"],
       "enabled": true,
       "ignoreUnstable": false,
+      "respectLatest": false,
       "allowedVersions": "!/-alpha(?:\\.|$)/",
       "minimumReleaseAge": "2 days",
       "minimumReleaseAgeBehaviour": "timestamp-required",

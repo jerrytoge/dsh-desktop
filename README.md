@@ -160,12 +160,16 @@ App 内执行 `pnpm update`，也不热替换 Harness。
 等待版本发布 **48 小时**后提出分组更新。自动合并已关闭。Renovate **只管理依赖范围**
 （含本地插件 peer 依赖），由其 pnpm manager 一并更新锁文件。
 
-Renovate 刻意不管理根 `version` 字段。早期版本曾用一个 regex manager 去同步它和
-`allowScripts`，但该 manager 复用了 `@deepseek-ai/dsh` 这个 depName，与同一
-`package.json` 里的真实依赖同名；Renovate 按 depName 去重，导致 `@deepseek-ai/dsh`
-本体和它的 ~80 个兄弟包**全都没被更新**，产出的 PR 处于混合版本状态而无法通过 CI。
-因此依赖范围是唯一真源，根 `version` 仅作参考，CI 打包时会用「Harness 版本 +
-run_number」覆盖它。
+DeepSeek 每次发布把新版本放在 npm 的 `next` 标签上，`latest` 标签可能滞后。
+Renovate 的 `respectLatest`（默认 `true`）只在「当前版本本身已超过 `latest`」时才允许
+升到高于 `latest` 的版本。因此**必须同时设置 `respectLatest: false`**：否则一旦某个包的
+`latest` 标签没跟上（例如 `@deepseek-ai/dsh` 停在 `0.1.5-rc.1`，而 80 个子包的 `latest`
+还很旧），就只有它被扣住、其余全部前进，产出混合版本的 PR 并卡死 CI。官方文档也建议
+`ignoreUnstable: false` 与 `respectLatest: false` 配套使用。
+
+Renovate 刻意不管理根 `version` 字段：依赖范围是唯一真源，根 `version` 仅作参考，
+CI 打包时会用「Harness 版本 + run_number」覆盖它。一致性检查对根 `version` 落后只给
+警告，不会让 PR 变红。
 
 `package.json` 中的 `allowScripts` 也已删除：pnpm 11 从不读取该键，原先是需要手工
 跟版本的死配置；原生构建许可由 `pnpm-workspace.yaml#allowBuilds` 按包名管理，无需
