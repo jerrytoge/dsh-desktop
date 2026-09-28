@@ -1,6 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const load = () => import('../scripts/smoke-packaged.mjs');
 
@@ -69,4 +71,34 @@ test('main isolates userData before lock and does not equate page load with read
 test('non-macOS fails before inspecting or spawning', async () => {
   const { runSmoke } = await load();
   await assert.rejects(runSmoke('app', { platform: 'linux', inspect: () => { throw new Error('unexpected inspect'); } }), /requires macOS/);
+});
+
+test('dependency graph resolution skips entryless packages and falls back to the bin subpath', async t => {
+  const { assertDependenciesResolve } = await load();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-smoke-resolve-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const write = (name, pkg, files = {}) => {
+    const dir = path.join(root, 'node_modules', ...name.split('/'));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg));
+    for (const [file, content] of Object.entries(files)) {
+      const target = path.join(dir, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content);
+    }
+  };
+  write('plain-main', { main: 'index.js' }, { 'index.js': 'module.exports = {};' });
+  write('root-export', { exports: { '.': './lib/index.js' } }, { 'lib/index.js': 'module.exports = {};' });
+  write('entryless', {});
+  // Harness >=0.1.7 shape: exports expose subpaths only; the packaged shell
+  // never require()s the package root — it spawns the bin — so the bin subpath
+  // must resolve instead.
+  write('subpath-only', { bin: { 'subpath-only': 'lib/bin.js' }, exports: { './lib/*': './lib/*' } }, { 'lib/bin.js': '#!/usr/bin/env node\n' });
+  write('subpath-no-bin', { exports: { './lib/*': './lib/*' } }, { 'lib/index.js': 'module.exports = {};' });
+
+  assertDependenciesResolve(root, { dependencies: { 'plain-main': '1', 'root-export': '1', 'entryless': '1', 'subpath-only': '1' } });
+  assert.throws(
+    () => assertDependenciesResolve(root, { dependencies: { 'subpath-no-bin': '1' } }),
+    error => error.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+    'an unresolvable root with no bin to fall back to must still fail');
 });
