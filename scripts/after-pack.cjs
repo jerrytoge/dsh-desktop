@@ -17,6 +17,18 @@ const KEEP_BY_FAMILY = {
   '@koromix': new Set(['koffi-darwin-arm64']),
 };
 
+// True when platform pruning (afterPack) or electron-builder's platform rules
+// intentionally keep this package out of the darwin-arm64 bundle. The bundle
+// verifier must skip these names instead of reporting them as missing.
+function isPrunable(packageName) {
+  if (packageName.startsWith('node-addon-require-builtin-')) {
+    return packageName !== 'node-addon-require-builtin-darwin-arm64';
+  }
+  const [scope, name] = packageName.split('/');
+  if (name === undefined || !Object.hasOwn(KEEP_BY_FAMILY, scope)) return false;
+  return !KEEP_BY_FAMILY[scope].has(name);
+}
+
 function listDirectories(directory) {
   if (!fs.existsSync(directory)) return [];
   return fs.readdirSync(directory, { withFileTypes: true })
@@ -104,3 +116,5 @@ async function afterPack(context) {
 
 module.exports = afterPack;
 module.exports.prunePackagedDependencies = prunePackagedDependencies;
+module.exports.isPrunable = isPrunable;
+module.exports.KEEP_BY_FAMILY = KEEP_BY_FAMILY;

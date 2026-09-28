@@ -100,6 +100,9 @@ jobs:
           fi
           echo "OK: all @deepseek-ai packages present in the packaged app"
 
+      - name: Verify full production closure is packaged
+        run: pnpm run check:bundle
+
       - name: Smoke test isolated packaged app
         timeout-minutes: 5
         run: pnpm run smoke:packaged

@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "productName": "DeepSeek Harness",
-  "version": "0.1.7-rc.2-8",
+  "version": "0.1.5-rc.1",
   "description": "Minimal Electron shell wrapping the DeepSeek Harness web GUI (macOS prototype)",
   "main": "main.js",
   "private": true,
@@ -12,6 +12,7 @@
     "test": "node --test test/*.test.js",
     "update:harness": "node scripts/update-harness.mjs",
     "check:harness": "node scripts/update-harness.mjs --check",
+    "check:bundle": "node scripts/verify-bundle.mjs",
     "smoke:packaged": "node scripts/smoke-packaged.mjs \"dist/mac-arm64/DeepSeek Harness.app\"",
     "make-icon": "node scripts/make-icon.mjs",
     "fetch-node": "node scripts/fetch-node.mjs",

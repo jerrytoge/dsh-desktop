@@ -87,6 +87,15 @@ export async function runSmoke(appPath, { timeoutMs = 120000, platform = process
         else reject(new Error(`Packaged smoke failed (exit=${code}, signal=${signal}, readiness=${output.includes('SMOKE_OK')})`));
       });
     });
+    // Readiness alone is not enough: the isolated smoke home loads only
+    // bundled plugins, so an import failure means the bundle is incomplete
+    // (electron-builder silently dropping packages) even though the app
+    // booted and reported ready.
+    const importFailures = output.split(/\r?\n/).map(line => line.trim())
+      .filter(line => line.endsWith('failed to import'));
+    if (importFailures.length) {
+      throw new Error(`Packaged sidecar reported failed plugin imports:\n${importFailures.join('\n')}`);
+    }
     return { version, output };
   } catch (error) {
     error.message += `\n${output}`;

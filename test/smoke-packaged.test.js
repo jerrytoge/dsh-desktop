@@ -73,6 +73,18 @@ test('non-macOS fails before inspecting or spawning', async () => {
   await assert.rejects(runSmoke('app', { platform: 'linux', inspect: () => { throw new Error('unexpected inspect'); } }), /requires macOS/);
 });
 
+test('smoke rejects sidecar plugin import failures even after readiness', async () => {
+  const { runSmoke } = await load();
+  const mock = mockLaunch(child => {
+    child.stdout.emit('data', '[dsh-desktop] SMOKE_OK\n');
+    child.stdout.emit('data', 'broken-plugin (@deepseek-ai/dsh-broken): failed to import\n');
+    child.emit('exit', 0, null);
+  });
+  await assert.rejects(runSmoke('app', mock.deps), /failed plugin imports/);
+  assert.deepEqual(mock.signals, [[-12345, 'SIGTERM'], [-12345, 'SIGKILL']]);
+  assert.equal(fs.existsSync(mock.options.env.HOME), false);
+});
+
 test('dependency graph resolution skips entryless packages and falls back to the bin subpath', async t => {
   const { assertDependenciesResolve } = await load();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-smoke-resolve-'));
