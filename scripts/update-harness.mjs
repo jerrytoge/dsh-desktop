@@ -87,16 +87,33 @@ export function lockPackages(lock) {
 // CI derives the shipped version from the installed Harness at build time.
 export function deriveTarget(project) {
   const versions = new Set();
-  for (const { data } of project.manifests) {
+  const ranges = new Map();
+  for (const { id, data } of project.manifests) {
     for (const section of SECTIONS) {
       for (const [name, range] of Object.entries(data[section] || {})) {
-        if (isHarness(name) && typeof range === 'string' && range.startsWith('^')) versions.add(range.slice(1));
+        if (isHarness(name) && typeof range === 'string' && range.startsWith('^')) {
+          versions.add(range.slice(1));
+          const entry = ranges.get(range) || { count: 0, refs: [] };
+          entry.count++;
+          if (entry.refs.length < 5) entry.refs.push(`${id} ${name}`);
+          ranges.set(range, entry);
+        }
       }
     }
   }
   if (versions.size === 1) {
     const [only] = versions;
     if (semver.valid(only) === only) return only;
+  }
+  if (versions.size > 1) {
+    // Falling back to the informational root version here would bury the real
+    // problem (a partially bumped tree) under hundreds of misleading errors.
+    const detail = [...ranges]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([range, { count, refs }]) => `  ${range} (${count}x): ${refs.join(', ')}${count > refs.length ? ', …' : ''}`)
+      .join('\n');
+    throw new Error(`Inconsistent Harness dependency ranges across manifests:\n${detail}\n`
+      + 'Every @deepseek-ai/dsh dependency must share one ^range; run node scripts/update-harness.mjs <version> to realign them.');
   }
   return project.manifests[0].data.version;
 }
@@ -114,6 +131,24 @@ export function checkConsistency(project, target, lock) {
   if (!locked.size) errors.push('Lockfile has no Harness packages');
   for (const [name, versions] of locked) {
     if (versions.size !== 1 || !versions.has(target)) errors.push(`Lockfile ${name}: expected only ${target}, got ${[...versions]}`);
+  }
+  // Two live versions of the same @deepseek-ai package mean a partially bumped
+  // tree (e.g. an exact pin fighting a Renovate range). electron-builder's pnpm
+  // collector then fails to resolve the duplicated tree and silently drops
+  // packages, so fail here — at the check step — instead of during packaging.
+  const scoped = new Map();
+  for (const section of [lock.packages, lock.snapshots]) {
+    for (const key of Object.keys(section || {})) {
+      const match = key.match(/^(@deepseek-ai\/[^@()]+)@([^()]+)(?:\(.*\))?$/);
+      if (!match) continue;
+      if (!scoped.has(match[1])) scoped.set(match[1], new Set());
+      scoped.get(match[1]).add(match[2]);
+    }
+  }
+  for (const [name, versions] of scoped) {
+    if (versions.size > 1) {
+      errors.push(`Lockfile ${name}: multiple live versions ${[...versions].sort()}; synchronize all @deepseek-ai packages to one version`);
+    }
   }
   for (const { id, data } of project.manifests) {
     const importer = lock.importers?.[id];

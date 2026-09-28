@@ -152,3 +152,65 @@ test('CLI invalid invocation is nonzero', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /canonical semver/);
 });
+
+// Regression: a partially bumped tree (two Harness ranges) used to fall back to
+// the stale informational root version, burying the real cause under a flood of
+// misleading consistency errors (Renovate PR, check:harness step).
+test('mixed Harness ranges fail with an actionable message instead of a root-version fallback', async () => {
+  const { deriveTarget, readProject } = await api;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'update-harness-mixed-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'packages/ui'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '0.1.5-rc.1', dependencies: {
+      '@deepseek-ai/dsh': '^0.1.7-rc.2', '@deepseek-ai/dsh-code-runtime': '^0.1.5-rc.3' } }));
+    fs.writeFileSync(path.join(dir, 'packages/ui/package.json'), JSON.stringify({ version: '0.1.0', peerDependencies: { '@deepseek-ai/dsh-ui': '^0.1.7-rc.2' } }));
+    assert.throws(() => deriveTarget(readProject(dir)), error => {
+      assert.match(error.message, /Inconsistent Harness dependency ranges/);
+      assert.match(error.message, /\^0\.1\.5-rc\.3/);
+      assert.match(error.message, /\^0\.1\.7-rc\.2/);
+      assert.match(error.message, /@deepseek-ai\/dsh-code-runtime/);
+      assert.match(error.message, /update-harness\.mjs <version>/);
+      return true;
+    });
+    // No Harness ^ranges at all keeps the historical root-version fallback.
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: '9.9.9', dependencies: {} }));
+    fs.writeFileSync(path.join(dir, 'packages/ui/package.json'), JSON.stringify({ version: '0.1.0' }));
+    assert.equal(deriveTarget(readProject(dir)), '9.9.9');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Regression: Renovate bumped root pins while dsh@0.1.5-rc.3 kept exact pins,
+// leaving schemastery/cordis at two live versions. electron-builder's pnpm
+// collector then dropped packages and the build failed in after-pack — this
+// must surface at the check step instead.
+test('dual live versions of one @deepseek-ai package fail the consistency check', async () => {
+  const { checkConsistency, readProject } = await api;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'update-harness-dual-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'packages/ui'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ version: OLD, dependencies: { '@deepseek-ai/dsh': `^${OLD}` } }));
+    fs.writeFileSync(path.join(dir, 'packages/ui/package.json'), JSON.stringify({ version: '0.1.0' }));
+    writeLock(dir, OLD, { '@deepseek-ai/schemastery@3.18.2': {}, '@deepseek-ai/schemastery@3.18.4': {} });
+    const project = readProject(dir);
+    const lock = yaml.load(fs.readFileSync(path.join(dir, 'pnpm-lock.yaml'), 'utf8'));
+    const errors = checkConsistency(project, OLD, lock);
+    assert.ok(errors.some(e => /Lockfile @deepseek-ai\/schemastery: multiple live versions/.test(e)), errors.join('\n'));
+
+    // Same version under two peer contexts is legitimate (proven buildable)
+    // and must not trip the detector.
+    const healthy = yaml.load(yaml.dump(lock));
+    delete healthy.packages['@deepseek-ai/schemastery@3.18.2'];
+    healthy.snapshots = {
+      [`@deepseek-ai/dsh@${OLD}(peer-a@1.0.0)`]: {},
+      [`@deepseek-ai/dsh@${OLD}(peer-b@1.0.0)`]: {},
+    };
+    const ok = checkConsistency(project, OLD, healthy).filter(e => /multiple live versions/.test(e));
+    assert.deepEqual(ok, []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
