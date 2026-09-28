@@ -17,16 +17,32 @@ export function smokeEnv(root, inherited = process.env) {
     XDG_CACHE_HOME: path.join(root, 'cache'), PATH: '/usr/bin:/bin:/usr/sbin:/sbin' };
 }
 
-export function inspectBundle(appPath) {
-  const resources = path.join(path.resolve(appPath), 'Contents', 'Resources');
-  const appDir = path.join(resources, 'app');
-  const manifest = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'));
+export function assertDependenciesResolve(appDir, manifest = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'))) {
   const require = createRequire(path.join(appDir, 'package.json'));
   // Resolve the actual runtime graph, not just the top-level manifest's presence.
   for (const name of Object.keys(manifest.dependencies || {})) {
     const dependency = JSON.parse(fs.readFileSync(path.join(appDir, 'node_modules', name, 'package.json'), 'utf8'));
-    if (dependency.main || dependency.exports) require.resolve(name);
+    if (!dependency.main && !dependency.exports) continue;
+    try {
+      require.resolve(name);
+    } catch (error) {
+      // Harness >=0.1.7 exports only subpaths (no "." and no main), so the
+      // package root is deliberately unrequireable. The shell never requires
+      // that root either — it spawns the bin — so verify the bin subpath,
+      // the entry the packaged app actually launches, instead.
+      const bin = typeof dependency.bin === 'string' ? dependency.bin
+        : dependency.bin && Object.values(dependency.bin)[0];
+      if (error.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED' || !bin) throw error;
+      require.resolve(`${name}/${bin.replace(/^\.\//, '')}`);
+    }
   }
+}
+
+export function inspectBundle(appPath) {
+  const resources = path.join(path.resolve(appPath), 'Contents', 'Resources');
+  const appDir = path.join(resources, 'app');
+  const manifest = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'));
+  assertDependenciesResolve(appDir, manifest);
   const dshManifestPath = path.join(appDir, 'node_modules/@deepseek-ai/dsh/package.json');
   const dsh = JSON.parse(fs.readFileSync(dshManifestPath, 'utf8'));
   const bin = typeof dsh.bin === 'string' ? dsh.bin : dsh.bin?.dsh;
