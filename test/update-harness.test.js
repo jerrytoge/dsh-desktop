@@ -31,6 +31,8 @@ test('updater CLI requires canonical explicit target and rejects invalid options
   for (const args of [[], ['latest'], ['^0.1.5'], ['v0.1.5'], [TARGET, OLD], ['--wat'], [TARGET, '--registry', 'http://bad'], [TARGET, '--registry'], ['--check', '--bypass-release-age']]) assert.throws(() => parseArgs(args));
   assert.equal(parseArgs(['--check']).check, true);
   assert.equal(parseArgs([TARGET, '--bypass-release-age']).bypassReleaseAge, true);
+  assert.equal(parseArgs(['--', TARGET]).target, TARGET);
+  assert.equal(parseArgs([TARGET, '--', '--bypass-release-age']).bypassReleaseAge, true);
 });
 
 test('synchronize changes only Harness ranges and the root version', async () => {
