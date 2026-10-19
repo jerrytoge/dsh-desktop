@@ -24,6 +24,8 @@ export function parseArgs(args) {
   const options = { check: false, bypassReleaseAge: false, registry: 'https://registry.npmjs.org' };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+    // pnpm forwards the documented `--` separator itself on newer versions.
+    if (arg === '--') continue;
     if (arg === '--check') options.check = true;
     else if (arg === '--bypass-release-age') options.bypassReleaseAge = true;
     else if (arg === '--registry') {
